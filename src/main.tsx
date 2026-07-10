@@ -959,8 +959,8 @@ function App() {
           setGameRunning(true);
           window.setTimeout(() => setDownload(current => ({ ...current, active: false })), 900);
         }
-        if (next.state === "idle")
-          setGameRunning(false),
+        if (next.state === "idle") {
+          setGameRunning(false);
           window.setTimeout(
             () =>
               setDownload({
@@ -971,6 +971,7 @@ function App() {
               }),
             700,
           );
+        }
       },
     ).then((value) => {
       unlisten = value;
