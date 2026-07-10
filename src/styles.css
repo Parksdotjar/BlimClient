@@ -2249,7 +2249,7 @@ body,
 .content-dots { width: 32px; height: 32px; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); }
 .content-empty { min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); text-align: center; }
 .content-empty b { margin-top: 10px; color: var(--text); font-size: 14px; }.content-empty span { margin-top: 5px; font-size: 12px; }.content-empty button { margin-top: 14px; padding: 9px 13px; border: 1px solid var(--border); border-radius: 7px; background: var(--control); color: var(--accent); font-size: 12px; }
-.content-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 54px; color: var(--muted); font-size: 11px; }
+.content-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 26px; color: var(--muted); font-size: 11px; }
 .content-pagination b { color: var(--text); }
 .content-pagination button { min-width: 76px; padding: 7px 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--control); color: var(--text); font-size: 11px; font-weight: 700; }
 .content-pagination button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--accent); }
