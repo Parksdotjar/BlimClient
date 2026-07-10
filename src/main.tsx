@@ -668,6 +668,7 @@ type InstanceDraft = {
   name: string;
   icon?: string | null;
   loader: string;
+  loaderVersion?: string | null;
   version: string;
   directory: string;
   java: string;
@@ -715,6 +716,7 @@ function NewInstancePage({
   const [releases, setReleases] = useState<Release[]>([]);
   const [javas, setJavas] = useState<JavaInstallation[]>([]);
   const [message, setMessage] = useState("");
+  const [importing, setImporting] = useState(false);
   useEffect(() => {
     void Promise.all([
       invoke<Release[]>("get_minecraft_releases"),
@@ -748,6 +750,18 @@ function NewInstancePage({
       setMessage(String(error));
     }
   };
+  const importPack = async () => {
+    setImporting(true);
+    setMessage("");
+    try {
+      const importedId = await invoke<string | null>("import_fabric_modpack");
+      if (importedId) onCreated();
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setImporting(false);
+    }
+  };
   const components: Array<[keyof InstanceDraft, string, string]> = [
     ["mods", "Include Mods Folder", "Create a mods folder for this instance"],
     [
@@ -771,8 +785,8 @@ function NewInstancePage({
   return (
     <div className="instance-page">
       <div className="instance-heading">
-        <h1>New Instance</h1>
-        <p>Create a new Minecraft instance to start playing.</p>
+        <div><h1>New Instance</h1><p>Create a new Minecraft instance to start playing.</p></div>
+        <button className="import-pack-action" disabled={importing} onClick={() => void importPack()}><CirclePlus size={17} /><span>{importing ? "Opening…" : "Import"}</span><small>.mrpack or .zip</small></button>
       </div>
       <div className="instance-layout">
         <section className="instance-main">
@@ -939,6 +953,7 @@ function InstancePage({ instance, busy, onPlay, onChanged }: { instance: Instanc
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("Name");
   const [filter, setFilter] = useState("All");
+  const [contentPage, setContentPage] = useState(1);
   const [menuOpen, setMenuOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [name, setName] = useState(instance.name);
@@ -948,16 +963,20 @@ function InstancePage({ instance, busy, onPlay, onChanged }: { instance: Instanc
   const loadContent = async () => { if (tab === "settings") return; try { setItems(await invoke<InstanceContentItem[]>("list_instance_content", { instanceId: instance.id, category: tab })); } catch (error) { setMessage(String(error)); } };
   useEffect(() => { void loadContent(); const timer = window.setInterval(() => void loadContent(), 2500); const focus = () => void loadContent(); window.addEventListener("focus", focus); return () => { window.clearInterval(timer); window.removeEventListener("focus", focus); }; }, [tab, instance.id]);
   useEffect(() => { setName(instance.name); setMemory(instance.memory); setJvmArguments(instance.jvmArguments); }, [instance]);
+  useEffect(() => { setContentPage(1); }, [tab, search, filter, sort, instance.id]);
   const toggleItem = async (item: InstanceContentItem, enabled: boolean) => { try { await invoke("toggle_instance_content", { instanceId: instance.id, category: tab, fileName: item.fileName, enabled }); await loadContent(); } catch (error) { setMessage(String(error)); } };
   const chooseIcon = (file?: File) => { if (!file) return; const reader = new FileReader(); reader.onload = () => { void invoke<InstanceDraft>("set_instance_icon", { instanceId: instance.id, icon: String(reader.result) }).then(onChanged).catch(error => setMessage(String(error))); }; reader.readAsDataURL(file); };
   const saveSettings = async () => { try { const saved = await invoke<InstanceDraft>("update_instance_settings", { instanceId: instance.id, name, memory, jvmArguments }); onChanged(saved); setMessage("Instance settings saved."); } catch (error) { setMessage(String(error)); } };
   const categoryLabel = tab === "mods" ? "Mods" : tab === "resourcepacks" ? "Resource Packs" : "Shaders";
   const visibleItems = items.filter(item => item.name.toLowerCase().includes(search.toLowerCase()) && (filter === "All" || (filter === "Enabled" ? item.enabled : !item.enabled))).sort((a, b) => sort === "Size" ? b.size - a.size : a.name.localeCompare(b.name));
+  const pageCount = Math.max(1, Math.ceil(visibleItems.length / 20));
+  const safePage = Math.min(contentPage, pageCount);
+  const pagedItems = visibleItems.slice((safePage - 1) * 20, safePage * 20);
   const tabs: Array<[InstanceTab, typeof Puzzle, string, string]> = [["mods", Puzzle, "Mods", "Manage your mods"], ["resourcepacks", PackageOpen, "Resource Packs", "Manage resource packs"], ["shaderpacks", Cuboid, "Shaders", "Manage shader packs"], ["settings", SettingsIcon, "Settings", "Configure instance settings"]];
   return <div className="instance-workspace">
     <section className="instance-hero-panel"><div className="instance-identity"><button className="instance-icon-picker" onClick={() => iconInput.current?.click()}>{instance.icon ? <img src={instance.icon} alt="" /> : <Cuboid size={32} />}<span><ImagePlus size={14} /></span></button><input ref={iconInput} type="file" accept="image/png,image/jpeg" hidden onChange={event => chooseIcon(event.target.files?.[0])} /><div><h1>{instance.name}</h1><p>{instance.version} • {instance.loader}</p><small>{instance.directory}</small></div></div><div className="instance-hero-actions"><button className="instance-play" disabled={busy} onClick={onPlay}><Play size={17} fill="currentColor" />Play</button><div className="instance-more-wrap"><button className="instance-more" onClick={() => setMenuOpen(value => !value)}><MoreHorizontal size={20} /></button>{menuOpen && <div className="instance-folder-menu"><button onClick={() => { setMenuOpen(false); void invoke("open_instance_folder", { instanceId: instance.id }); }}>Show in folder</button><button onClick={() => { setMenuOpen(false); void invoke("open_instance_folder", { instanceId: instance.id, category: "mods" }); }}>Open mods folder</button></div>}</div></div>
     <div className="instance-tabs">{tabs.map(([id, Icon, title, description]) => <button key={id} className={tab === id ? "selected" : ""} onClick={() => setTab(id)}><span><Icon size={22} /></span><div><b>{title}</b><small>{description}</small></div></button>)}</div></section>
-    {tab === "settings" ? <section className="instance-manager settings-manager"><div className="manager-heading"><div><h2>Instance Settings</h2><p>Change settings used when this instance launches.</p></div><button className="add-content" onClick={saveSettings}>Save Changes</button></div><div className="instance-settings-grid"><label><span>Name</span><input value={name} onChange={event => setName(event.target.value)} /></label><label><span>Memory <b>{memory} MB</b></span><input type="range" min="1024" max="16384" step="512" value={memory} onChange={event => setMemory(Number(event.target.value))} /></label><label className="wide"><span>JVM Arguments</span><textarea value={jvmArguments} onChange={event => setJvmArguments(event.target.value)} placeholder="Optional Java arguments" /></label></div>{message && <p className="instance-message">{message}</p>}</section> : <section className="instance-manager"><div className="manager-heading"><div><h2>Installed {categoryLabel} <span>{items.length}</span></h2><p>Files placed in this instance's {tab} folder appear automatically.</p></div><div className="manager-tools"><Select value={sort} options={["Name", "Size"]} onChange={setSort} /><button className="add-content" title={`Installing ${categoryLabel.toLowerCase()} in-app is coming later`}><CirclePlus size={16} />Add {categoryLabel}</button></div></div><div className="content-list">{visibleItems.length ? visibleItems.map(item => <div className="content-item" key={item.id}><span className="content-icon">{item.icon ? <img src={item.icon} alt="" /> : <PackageOpen size={22} />}</span><div className="content-name"><b>{item.name}</b><small>{item.version || item.fileName}</small></div><span className="content-loader">{instance.loader}</span><span className="content-size">{item.size >= 1048576 ? `${(item.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(item.size / 1024))} KB`}</span><Toggle value={item.enabled} onChange={value => void toggleItem(item, value)} /><button className="content-dots"><MoreHorizontal size={18} /></button></div>) : <div className="content-empty"><PackageOpen size={24} /><b>No {categoryLabel.toLowerCase()} installed</b><span>Open the folder and drag files here to get started.</span><button onClick={() => void invoke("open_instance_folder", { instanceId: instance.id, category: tab })}>Open folder</button></div>}</div><div className="content-search"><Search size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={`Search ${categoryLabel.toLowerCase()}...`} /><Select value={filter} options={["All", "Enabled", "Disabled"]} onChange={setFilter} /></div>{message && <p className="instance-message">{message}</p>}</section>}
+    {tab === "settings" ? <section className="instance-manager settings-manager"><div className="manager-heading"><div><h2>Instance Settings</h2><p>Change settings used when this instance launches.</p></div><button className="add-content" onClick={saveSettings}>Save Changes</button></div><div className="instance-settings-grid"><label><span>Name</span><input value={name} onChange={event => setName(event.target.value)} /></label><label><span>Memory <b>{memory} MB</b></span><input type="range" min="1024" max="16384" step="512" value={memory} onChange={event => setMemory(Number(event.target.value))} /></label><label className="wide"><span>JVM Arguments</span><textarea value={jvmArguments} onChange={event => setJvmArguments(event.target.value)} placeholder="Optional Java arguments" /></label></div>{message && <p className="instance-message">{message}</p>}</section> : <section className="instance-manager"><div className="manager-heading"><div><h2>Installed {categoryLabel} <span>{items.length}</span></h2><p>Files placed in this instance's {tab} folder appear automatically.</p></div><div className="manager-tools"><Select value={sort} options={["Name", "Size"]} onChange={setSort} /><button className="add-content" title={`Installing ${categoryLabel.toLowerCase()} in-app is coming later`}><CirclePlus size={16} />Add {categoryLabel}</button></div></div><div className="content-list">{visibleItems.length ? pagedItems.map(item => <div className="content-item" key={item.id}><span className="content-icon">{item.icon ? <img src={item.icon} alt="" /> : <PackageOpen size={22} />}</span><div className="content-name"><b>{item.name}</b><small>{item.version || item.fileName}</small></div><span className="content-loader">{instance.loader}</span><span className="content-size">{item.size >= 1048576 ? `${(item.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(item.size / 1024))} KB`}</span><Toggle value={item.enabled} onChange={value => void toggleItem(item, value)} /><button className="content-dots"><MoreHorizontal size={18} /></button></div>) : <div className="content-empty"><PackageOpen size={24} /><b>No {categoryLabel.toLowerCase()} installed</b><span>Open the folder and drag files here to get started.</span><button onClick={() => void invoke("open_instance_folder", { instanceId: instance.id, category: tab })}>Open folder</button></div>}</div>{visibleItems.length > 20 && <div className="content-pagination"><button disabled={safePage === 1} onClick={() => setContentPage(safePage - 1)}>Previous</button><span>Page <b>{safePage}</b> of {pageCount}</span><button disabled={safePage === pageCount} onClick={() => setContentPage(safePage + 1)}>Next</button></div>}<div className="content-search"><Search size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={`Search ${categoryLabel.toLowerCase()}...`} /><Select value={filter} options={["All", "Enabled", "Disabled"]} onChange={setFilter} /></div>{message && <p className="instance-message">{message}</p>}</section>}
   </div>;
 }
 
@@ -968,7 +987,7 @@ const formatBytes = (bytes = 0) => bytes >= 1048576 ? `${(bytes / 1048576).toFix
 function DownloadsPage({ download, instances, completed, onClear, onCancel }: { download: DownloadViewState; instances: InstanceDraft[]; completed: CompletedDownload[]; onClear: () => void; onCancel: () => void }) {
   const activeInstance = instances.find(instance => instance.id === download.instanceId) || instances[0];
   const failed = download.state === "error";
-  const status = failed ? "Failed" : download.state === "launching" ? "Starting" : download.state === "running" ? "Ready" : "Downloading";
+  const status = failed ? "Failed" : download.state === "launching" ? "Starting" : download.state === "running" ? "Ready" : download.state === "complete" ? "Completed" : "Downloading";
   return <div className="downloads-page">
     <header className="downloads-heading"><h1>Downloads</h1><p>Monitor Minecraft installations and launch tasks.</p></header>
     <section className="download-section"><h2>Active</h2>
@@ -1001,6 +1020,7 @@ function App() {
     message: "",
   });
   const [completedDownloads, setCompletedDownloads] = useState<CompletedDownload[]>(() => { try { return JSON.parse(localStorage.getItem("bloom-completed-downloads") || "[]").slice(0, 5); } catch { return []; } });
+  const lastCompletedTask = useRef("");
   const [ringProgress, setRingProgress] = useState(0);
   const [gameRunning, setGameRunning] = useState(false);
   const [toast, setToast] = useState("");
@@ -1052,8 +1072,9 @@ function App() {
       "minecraft-launch-progress",
       (event) => {
         const next = event.payload;
+        if (next.state === "installing") lastCompletedTask.current = "";
         setDownload({
-          active: next.state === "installing" || next.state === "launching" || next.state === "running",
+          active: next.state === "installing" || next.state === "launching" || next.state === "running" || next.state === "complete",
           progress: next.progress,
           state: next.state,
           message: next.message,
@@ -1069,6 +1090,9 @@ function App() {
         }
         if (next.state === "running") {
           setGameRunning(true);
+        }
+        if (next.state === "complete") {
+          void invoke<InstanceDraft[]>("list_instances").then(setInstances);
         }
         if (next.state === "idle") {
           setGameRunning(false);
@@ -1091,9 +1115,12 @@ function App() {
   }, []);
   useEffect(() => { localStorage.setItem("bloom-completed-downloads", JSON.stringify(completedDownloads.slice(0, 5))); }, [completedDownloads]);
   useEffect(() => {
-    if (download.state !== "running" || !download.instanceId) return;
+    if ((download.state !== "running" && download.state !== "complete") || !download.instanceId) return;
+    const completionKey = `${download.state}:${download.instanceId}`;
+    if (lastCompletedTask.current === completionKey) return;
     const instance = instances.find(item => item.id === download.instanceId);
     if (!instance) return;
+    lastCompletedTask.current = completionKey;
     setCompletedDownloads(current => [{ id: `${instance.id}-${Date.now()}`, name: instance.name, version: instance.version, loader: instance.loader, completedAt: Date.now() }, ...current.filter(item => item.name !== instance.name || item.version !== instance.version)].slice(0, 5));
   }, [download.state, download.instanceId, instances]);
   useEffect(() => {
@@ -1114,7 +1141,7 @@ function App() {
     return () => window.cancelAnimationFrame(frame);
   }, [download.active, download.progress, download.state]);
   useEffect(() => {
-    if (download.state !== "running" || ringProgress < 99) return;
+    if ((download.state !== "running" && download.state !== "complete") || ringProgress < 99) return;
     const timer = window.setTimeout(() => setDownload(current => ({ ...current, active: false })), 1250);
     return () => window.clearTimeout(timer);
   }, [download.state, ringProgress]);
@@ -1243,7 +1270,7 @@ function App() {
         <div className="sidebar-spacer" />
         <button className={`sidebar-link downloads-link ${page === "downloads" ? "active" : ""}`} onClick={() => setPage("downloads")}>
           <Download size={17} />
-          Downloads {download.active && <span className={`download-ring ${download.state === "running" && ringProgress >= 99 ? "complete" : ""}`} style={{ "--download-progress": `${ringProgress}%` } as CSSProperties}>{download.state === "running" && ringProgress >= 99 && <Check size={12} />}</span>}
+          Downloads {download.active && <span className={`download-ring ${(download.state === "running" || download.state === "complete") && ringProgress >= 99 ? "complete" : ""}`} style={{ "--download-progress": `${ringProgress}%` } as CSSProperties}>{(download.state === "running" || download.state === "complete") && ringProgress >= 99 && <Check size={12} />}</span>}
         </button>
         <button className="sidebar-link">
           <TerminalSquare size={17} />

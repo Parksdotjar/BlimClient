@@ -28,6 +28,13 @@ These rules apply to every future screen, component, and interaction in Bloom Cl
 - Interactive controls need hover, focus, and pressed states.
 - Use Anime.js for purposeful UI motion, including toggle thumb movement and subtle state transitions. Respect the Show Animations setting.
 - Do not expose browser context menus or browser-looking actions inside the client.
+- File imports must use a clearly labeled accent-colored action and report genuine native progress through Downloads; never simulate import progress.
+
+## Large collections
+
+- Content libraries such as mods, resource packs, and shaders show at most 20 entries per page.
+- Search, sorting, and filters apply before pagination, and changing any of them returns the user to page one.
+- Pagination controls use Bloom's custom button styling and remain theme- and accent-aware.
 
 ## Scrollbars
 
