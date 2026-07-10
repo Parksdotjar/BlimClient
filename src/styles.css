@@ -1902,12 +1902,16 @@ body,
   cursor: pointer;
 }
 .memory-scale {
-  display: flex;
-  justify-content: space-between;
+  position: relative;
+  height: 14px;
   margin-top: 10px;
   color: var(--muted);
   font-size: 11px;
 }
+.memory-scale span { position: absolute; top: 0; }
+.memory-scale span:first-child { left: 0; }
+.memory-scale span:nth-child(2) { left: 42.857%; transform: translateX(-50%); }
+.memory-scale span:last-child { right: 0; }
 .instance-side {
   border-left: 1px solid var(--line);
   padding-left: 22px;
