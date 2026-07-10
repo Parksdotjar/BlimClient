@@ -188,7 +188,8 @@ fn save_instance(config: InstanceConfig) -> Result<InstanceConfig, String> {
     config.id = config.name.to_lowercase().chars().map(|character| if character.is_ascii_alphanumeric() { character } else { '-' }).collect::<String>().trim_matches('-').to_string();
     if config.id.is_empty() { return Err("Choose an instance name containing letters or numbers.".into()); }
     let game_dir = if config.directory.starts_with(".minecraft") { std::env::var("APPDATA").map_err(|_| "APPDATA is unavailable.".to_string())?.into() } else { std::path::PathBuf::from(&config.directory) };
-    let target = if config.directory.starts_with(".minecraft") { game_dir.join(&config.directory) } else { game_dir };
+    let mut target = if config.directory.starts_with(".minecraft") { game_dir.join(&config.directory) } else { game_dir };
+    if target.file_name().and_then(|name| name.to_str()).map(|name| name.eq_ignore_ascii_case("instances")).unwrap_or(false) { target = target.join(&config.id); }
     std::fs::create_dir_all(&target).map_err(|error| error.to_string())?;
     for (enabled, folder) in [(config.mods || config.loader.eq_ignore_ascii_case("fabric"), "mods"), (config.resource_packs, "resourcepacks"), (config.shader_packs, "shaderpacks"), (config.config, "config")] { if enabled { std::fs::create_dir_all(target.join(folder)).map_err(|error| error.to_string())?; } }
     config.directory = target.to_string_lossy().to_string();
@@ -230,6 +231,81 @@ fn install_fabric_api(config: &InstanceConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn execute_download_plan(app: &tauri::AppHandle, instance_id: &str, plan: &mc_launcher_core::net::download::DownloadPlan, cancel: &AtomicBool, start: u8, end: u8, stage: &str, assets: bool) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let client = reqwest::blocking::Client::builder().user_agent("BloomClient/0.1.0 (https://bloomclient.org)").build().map_err(|error| error.to_string())?;
+    let total_tasks = plan.tasks.len().max(1) as f64;
+    for (index, task) in plan.tasks.iter().enumerate() {
+        if cancel.load(Ordering::SeqCst) { return Err("__cancelled__".into()); }
+        if mc_launcher_core::net::download::should_skip_existing(task).map_err(|error| error.to_string())? {
+            let progress = start as f64 + ((index + 1) as f64 / total_tasks) * (end - start) as f64;
+            emit_download(app, instance_id, progress.round() as u8, if assets { "Loading assets".into() } else { stage.into() }, 0, 0, 0);
+            continue;
+        }
+        if let Some(parent) = task.destination.parent() { std::fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
+        let mut response = client.get(&task.url).send().map_err(|error| format!("Download failed for {}: {error}", task.label))?.error_for_status().map_err(|error| format!("Download failed for {}: {error}", task.label))?;
+        let total_bytes = response.content_length().unwrap_or(0);
+        let temporary = task.destination.with_extension("bloom-part");
+        let mut file = std::fs::File::create(&temporary).map_err(|error| error.to_string())?;
+        let mut buffer = [0u8; 65536];
+        let mut received = 0u64;
+        let mut sample_bytes = 0u64;
+        let mut sample_time = std::time::Instant::now();
+        loop {
+            if cancel.load(Ordering::SeqCst) { let _ = std::fs::remove_file(&temporary); return Err("__cancelled__".into()); }
+            let count = response.read(&mut buffer).map_err(|error| error.to_string())?;
+            if count == 0 { break; }
+            file.write_all(&buffer[..count]).map_err(|error| error.to_string())?;
+            received += count as u64;
+            let elapsed = sample_time.elapsed().as_secs_f64();
+            let speed = if elapsed >= 0.2 { let value = ((received - sample_bytes) as f64 / elapsed) as u64; sample_bytes = received; sample_time = std::time::Instant::now(); value } else { 0 };
+            let file_fraction = if total_bytes > 0 { received as f64 / total_bytes as f64 } else { 0.0 };
+            let overall = start as f64 + ((index as f64 + file_fraction) / total_tasks) * (end - start) as f64;
+            emit_download(app, instance_id, overall.round() as u8, if assets { "Loading assets".into() } else { stage.into() }, received, total_bytes, speed);
+        }
+        drop(file);
+        if let Some(mc_launcher_core::net::download::Checksum::Sha1(expected)) = &task.checksum {
+            let actual = mc_launcher_core::io::hash::sha1_file(&temporary).map_err(|error| error.to_string())?; if &actual != expected { let _ = std::fs::remove_file(&temporary); return Err(format!("Checksum verification failed for {}.", task.label)); }
+        }
+        if task.destination.exists() { std::fs::remove_file(&task.destination).map_err(|error| error.to_string())?; }
+        std::fs::rename(&temporary, &task.destination).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn install_instance_files(app: &tauri::AppHandle, instance_id: &str, config: &InstanceConfig, minecraft_dir: &std::path::Path, cancel: &AtomicBool) -> Result<String, String> {
+    emit_launch(app, instance_id, "installing", 2, "Checking Minecraft version");
+    let vanilla = mc_launcher_core::install::client::fetch_vanilla_version(&config.version).map_err(|error| error.to_string())?;
+    mc_launcher_core::install::client::write_version_json(minecraft_dir, &vanilla).map_err(|error| error.to_string())?;
+    let base_plan = mc_launcher_core::install::vanilla::plan_vanilla_downloads(&vanilla, minecraft_dir).map_err(|error| error.to_string())?;
+    execute_download_plan(app, instance_id, &base_plan, cancel, 4, 35, "Downloading Minecraft libraries", false)?;
+    if let Some(index) = &vanilla.asset_index {
+        let path = mc_launcher_core::install::assets::asset_index_path(minecraft_dir, &index.id);
+        let data: mc_launcher_core::install::assets::AssetIndexJson = serde_json::from_slice(&std::fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+        let assets = mc_launcher_core::install::assets::plan_asset_object_downloads_from_index(&data, minecraft_dir);
+        execute_download_plan(app, instance_id, &assets, cancel, 35, 88, "Loading assets", true)?;
+    }
+    let mut version_id = config.version.clone();
+    if config.loader.eq_ignore_ascii_case("fabric") {
+        emit_launch(app, instance_id, "installing", 89, "Resolving Fabric Loader");
+        let loaders = mc_launcher_core::loader::fabric::list_loader_versions().map_err(|error| error.to_string())?;
+        let loader = mc_launcher_core::loader::fabric::latest_stable_loader(&loaders).map_err(|error| error.to_string())?;
+        let profile = mc_launcher_core::loader::fabric::fetch_profile(&config.version, &loader.version).map_err(|error| error.to_string())?;
+        version_id = profile.id.clone().ok_or("Fabric did not return a launch profile ID.")?;
+        mc_launcher_core::install::loader::write_loader_profile(minecraft_dir, &profile).map_err(|error| error.to_string())?;
+        let launcher = mc_launcher_core::launcher::Launcher::new(minecraft_dir);
+        let merged = launcher.load_version(&version_id).map_err(|error| error.to_string())?;
+        let loader_plan = mc_launcher_core::install::vanilla::plan_vanilla_downloads(&merged, minecraft_dir).map_err(|error| error.to_string())?;
+        execute_download_plan(app, instance_id, &loader_plan, cancel, 89, 94, "Installing Fabric Loader", false)?;
+        mc_launcher_core::install::natives::extract_natives(&merged.libraries, minecraft_dir, &version_id).map_err(|error| error.to_string())?;
+        emit_launch(app, instance_id, "installing", 94, "Installing Fabric API");
+        install_fabric_api(config)?;
+    } else {
+        mc_launcher_core::install::natives::extract_natives(&vanilla.libraries, minecraft_dir, &version_id).map_err(|error| error.to_string())?;
+    }
+    Ok(version_id)
+}
+
 fn selected_java(config: &InstanceConfig, required: u32) -> Result<std::path::PathBuf, String> {
     if !config.java.to_ascii_lowercase().starts_with("automatic") && !config.java.trim().is_empty() {
         let configured_path = config.java.rsplit_once(" — ").map(|(_, path)| path).unwrap_or(&config.java);
@@ -259,45 +335,15 @@ async fn launch_minecraft(app: tauri::AppHandle, state: tauri::State<'_, Launche
     std::thread::spawn(move || {
         let config = match load_instance(&instance_id) { Ok(config) => config, Err(error) => { emit_launch(&app, &instance_id, "error", 0, error); if let Ok(mut value) = active.lock() { *value = false; } return; } };
         emit_launch(&app, &instance_id, "installing", 2, "Preparing Minecraft files");
-        let launcher = mc_launcher_core::launcher::Launcher::new(&config.directory);
-        let mut finished_tasks = 0u8;
-        let mut last_label = String::new();
-        let mut last_received = 0u64;
-        let mut last_sample = std::time::Instant::now();
-        let mut loading_assets = false;
-        let app_for_progress = app.clone();
-        let id_for_progress = instance_id.clone();
-        let install_request = if config.loader.eq_ignore_ascii_case("fabric") {
-            mc_launcher_core::install::InstallRequest { minecraft_version: config.version.clone(), loader: Some(mc_launcher_core::loader::common::LoaderSpec::Fabric { version: mc_launcher_core::loader::common::LoaderVersion::LatestStable }), java: mc_launcher_core::install::JavaInstallPolicy::Auto }
-        } else { mc_launcher_core::install::InstallRequest::vanilla(&config.version) };
-        let install = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| launcher.install_with_progress(install_request, &mut move |event| {
-            use mc_launcher_core::progress::ProgressEvent;
-            if cancel_requested.load(Ordering::SeqCst) { std::panic::panic_any("bloom-download-cancelled"); }
-            match event {
-                ProgressEvent::StageStarted { stage } => {
-                    use mc_launcher_core::progress::InstallStage;
-                    loading_assets = matches!(&stage, InstallStage::DownloadAssets);
-                    let message = match stage { InstallStage::ResolveVersion => "Checking Minecraft version", InstallStage::DownloadLibraries => "Downloading libraries", InstallStage::DownloadAssets => "Downloading game assets", InstallStage::InstallRuntime => "Preparing Java runtime", InstallStage::ExtractNatives => "Extracting native files", InstallStage::LoaderInstall => "Installing loader", InstallStage::Verify => "Verifying downloaded files" };
-                    emit_launch(&app_for_progress, &id_for_progress, "installing", 4, message);
-                }
-                ProgressEvent::TaskFinished { label } | ProgressEvent::TaskSkipped { label, .. } => { finished_tasks = finished_tasks.saturating_add(1); let progress = 5 + finished_tasks.saturating_mul(2).min(88); emit_launch(&app_for_progress, &id_for_progress, "installing", progress, if loading_assets { "Loading assets".to_string() } else { label }); }
-                ProgressEvent::BytesReceived { label, received, total } => {
-                    if label != last_label { last_label = label.clone(); last_received = 0; last_sample = std::time::Instant::now(); }
-                    let elapsed = last_sample.elapsed().as_secs_f64();
-                    let speed = if elapsed > 0.15 { ((received.saturating_sub(last_received)) as f64 / elapsed) as u64 } else { 0 };
-                    if elapsed > 0.15 { last_received = received; last_sample = std::time::Instant::now(); }
-                    let fraction = total.filter(|value| *value > 0).map(|value| received.saturating_mul(100) / value).unwrap_or(0) as u8;
-                    let progress = (5 + finished_tasks.saturating_mul(2) + fraction / 50).min(93);
-                    emit_download(&app_for_progress, &id_for_progress, progress, if loading_assets { "Loading assets".to_string() } else { label }, received, total.unwrap_or(0), speed);
-                }
-                _ => {}
-            }
-        })));
-        let install = match install { Ok(result) => result, Err(_) => { emit_launch(&app, &instance_id, "cancelled", 0, "Download cancelled"); if let Ok(mut value) = active.lock() { *value = false; } return; } };
+        let shared_minecraft = match bloom_data_dir() { Ok(path) => path.join("minecraft"), Err(error) => { emit_launch(&app, &instance_id, "error", 0, error); if let Ok(mut value) = active.lock() { *value = false; } return; } };
+        let launcher = mc_launcher_core::launcher::Launcher::new(&shared_minecraft);
+        let installed_version = match install_instance_files(&app, &instance_id, &config, &shared_minecraft, &cancel_requested) {
+            Ok(version) => version,
+            Err(error) if error == "__cancelled__" => { emit_launch(&app, &instance_id, "cancelled", 0, "Download cancelled"); if let Ok(mut value) = active.lock() { *value = false; } return; }
+            Err(error) => { emit_launch(&app, &instance_id, "error", 0, format!("Minecraft installation failed: {error}")); if let Ok(mut value) = active.lock() { *value = false; } return; }
+        };
         let result = (|| -> Result<(), String> {
-            let installed = install.map_err(|error| format!("Minecraft installation failed: {error}"))?;
-            if config.loader.eq_ignore_ascii_case("fabric") { emit_launch(&app, &instance_id, "installing", 92, "Installing Fabric API"); install_fabric_api(&config)?; }
-            let version = launcher.load_version(&installed.version_id).map_err(|error| format!("Minecraft metadata could not be loaded: {error}"))?;
+            let version = launcher.load_version(&installed_version).map_err(|error| format!("Minecraft metadata could not be loaded: {error}"))?;
             let required_java = version.java_version.as_ref().map(|value| value.major_version.max(8) as u32).unwrap_or(8);
             let java = selected_java(&config, required_java)?;
             emit_launch(&app, &instance_id, "launching", 94, format!("Launching with Java {required_java}"));
@@ -309,10 +355,28 @@ async fn launch_minecraft(app: tauri::AppHandle, state: tauri::State<'_, Launche
             args.insert(main_index, format!("-Xmx{}M", config.memory));
             for argument in config.jvm_arguments.split_whitespace().rev() { args.insert(main_index, argument.to_string()); }
             let mut process = std::process::Command::new(command.executable);
-            process.args(args).current_dir(command.working_dir).envs(command.env);
+            process.args(args).current_dir(command.working_dir).envs(command.env).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
             let mut child = process.spawn().map_err(|error| format!("Minecraft could not start: {error}"))?;
-            emit_launch(&app, &instance_id, "running", 100, "Minecraft is running");
-            let _ = child.wait();
+            emit_launch(&app, &instance_id, "launching", 96, "Starting Minecraft process");
+            let (log_sender, log_receiver) = std::sync::mpsc::channel::<String>();
+            if let Some(stdout) = child.stdout.take() { let sender = log_sender.clone(); std::thread::spawn(move || { use std::io::BufRead; for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) { let _ = sender.send(line); } }); }
+            if let Some(stderr) = child.stderr.take() { let sender = log_sender.clone(); std::thread::spawn(move || { use std::io::BufRead; for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) { let _ = sender.send(line); } }); }
+            drop(log_sender);
+            let mut ready = false;
+            loop {
+                if cancel_requested.load(Ordering::SeqCst) { let _ = child.kill(); return Err("Minecraft launch was cancelled.".into()); }
+                while let Ok(line) = log_receiver.try_recv() {
+                    if line.contains("Loading ") && line.contains(" mods") { emit_launch(&app, &instance_id, "launching", 97, "Loading Fabric mods"); }
+                    else if line.contains("Backend library") || line.contains("LWJGL Version") { emit_launch(&app, &instance_id, "launching", 98, "Initializing game renderer"); }
+                    else if line.contains("Reloading ResourceManager") { emit_launch(&app, &instance_id, "launching", 99, "Loading game resources"); }
+                    if !ready && (line.contains("OpenAL initialized") || line.contains("Sound engine started") || line.contains("Created:")) { ready = true; emit_launch(&app, &instance_id, "running", 100, "Minecraft is ready"); }
+                }
+                if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+                    if !ready && !status.success() { return Err(format!("Minecraft exited before opening (exit code {}).", status.code().map(|code| code.to_string()).unwrap_or_else(|| "unknown".into()))); }
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(75));
+            }
             Ok(())
         })();
         match result { Ok(()) => emit_launch(&app, &instance_id, "idle", 0, "Minecraft closed"), Err(error) => emit_launch(&app, &instance_id, "error", 0, error) }

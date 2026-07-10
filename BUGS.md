@@ -15,6 +15,7 @@ This file is the durable, context-independent record of bugs found in Bloom Clie
 | BLIM-001 | Fixed | Development | Tauri waited for port 1420 while Vite used port 5173 |
 | BLIM-002 | Fixed | Development | Vite watched Rust build binaries and crashed with Windows `EBUSY` |
 | BLIM-003 | Open | Packaging | Tauri packaging needs the supplied icon assets enabled |
+| BLIM-004 | Fixed | Launcher | Download completed before Minecraft was actually ready |
 
 ---
 
@@ -42,6 +43,14 @@ This file is the durable, context-independent record of bugs found in Bloom Clie
 - **Root cause:** Packaging was enabled before the project’s real icon set had been added.
 - **Current state:** The icon set now exists in `src-tauri/icons/`, but packaging remains disabled in `src-tauri/tauri.conf.json` until the assets are explicitly wired into the release configuration.
 - **Next fix:** Enable the Tauri bundle and configure the supplied `.ico`, `.png`, and `.icns` assets, then verify a Windows release build.
+
+## BLIM-004 — Launcher progress completed before game readiness
+
+- **Status:** Fixed
+- **Symptom:** Fabric and fresh instances appeared complete immediately after Java spawned, while dependencies or Minecraft startup were still running.
+- **Root cause:** Progress used an estimated event counter, the dependency library did not emit its advertised byte events, and `running` was emitted at process spawn rather than game readiness. Each instance also used a separate dependency root.
+- **Fix:** Bloom now streams official download plans itself with byte counts, transfer speed, checksum verification, cancellation, and exact task completion. Libraries/assets use a shared Bloom cache, while saves/mods remain isolated per instance. Startup remains active until Minecraft logs a real renderer/resource/audio readiness milestone.
+- **Verification:** `cargo check` and `npm run build` pass.
 
 ## How to add a bug
 
