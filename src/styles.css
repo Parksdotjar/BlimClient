@@ -33,6 +33,7 @@ button {
 button:focus { outline: none; }
 button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: 2px; }
 .sidebar {
+  position: relative;
   width: 280px;
   flex-shrink: 0;
   background: linear-gradient(180deg, #171c1f, #14181b 70%, #111518);
@@ -41,11 +42,34 @@ button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 30%, 
   display: flex;
   flex-direction: column;
 }
+.sidebar::before,
+.sidebar::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--sidebar-surface) 62%, #000);
+}
+.sidebar::before { top: 0; height: 79px; }
+.sidebar::after { bottom: 0; height: 82px; }
+.sidebar > * { position: relative; z-index: 1; }
 .brand {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
   margin: 0 4px 30px;
+}
+.brand::after {
+  content: "";
+  position: absolute;
+  left: -4px;
+  right: -4px;
+  bottom: -16px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--line) 7%, var(--line) 93%, transparent);
 }
 .brand img {
   width: 38px;

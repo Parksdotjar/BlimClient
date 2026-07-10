@@ -19,6 +19,7 @@ These rules apply to every future screen, component, and interaction in Bloom Cl
 - Only the main content pane scrolls. Long pages must never increase the sidebar height or create a page-level scrollbar.
 - Keep navigation icons and labels aligned on one consistent grid.
 - Use the same spacing rhythm and card treatment across settings, home, and future screens.
+- Sidebar branding and account areas use separate, slightly darker theme-aware surface zones, divided from navigation by short faded separators rather than full-width rules.
 
 ## Borders and separators
 
