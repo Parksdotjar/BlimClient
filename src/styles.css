@@ -102,3 +102,7 @@ html,body,.app-shell{background:var(--page);color:#f1f4f1}.sidebar{background:li
 /* Compact sign-in panel rises above the account row */
 .signin-panel{left:-1px;right:-1px;bottom:calc(100% + 8px);min-height:158px;height:158px;padding:14px 16px;justify-content:center;animation:signin-rise-vertical 260ms cubic-bezier(.22,1,.36,1)}.signin-panel .device-code{margin-top:0}.signin-panel .microsoft-button{margin-top:12px}@keyframes signin-rise-vertical{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
 
+
+/* Keep the signed-out row visible beneath the compact overlay */
+.signin-panel{bottom:calc(100% + 8px);min-height:120px;height:120px;padding:10px 12px}.signin-panel .device-code{padding:9px 11px}.signin-panel .microsoft-button{margin-top:8px;padding:7px}.copy-toast{top:72px}
+
