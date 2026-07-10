@@ -1386,9 +1386,10 @@ body,
 .profile-popover { position: absolute; z-index: 30; bottom: calc(100% + 10px); left: 0; width: 226px; padding: 7px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel-strong); box-shadow: 0 16px 38px #000a; animation: profile-popover-in 160ms ease both; }
 .profile-popover > button, .profile-appearance-row > button { width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 10px 9px; border: 0; border-radius: 7px; background: transparent; text-align: left; color: var(--text); font-size: 14px; }
 .profile-popover > button:hover, .profile-appearance-row > button:hover { background: var(--control); }
-.profile-appearance-row { position: relative; }
-.theme-mini-picker { display: flex; gap: 6px; padding: 3px 8px 9px; }
-.theme-mini-picker button { width: 34px; height: 30px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--control); color: var(--muted); }
+.profile-appearance-row { position: relative; display: flex; align-items: center; padding: 2px 9px; }
+.profile-appearance-row > button { width: auto; flex: 0 0 auto; gap: 6px; padding: 8px 0; justify-content: flex-start; }
+.theme-mini-picker { display: flex; align-items: center; gap: 4px; margin-left: auto; padding: 0; }
+.theme-mini-picker button { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 7px; background: var(--control); color: var(--muted); }
 .theme-mini-picker button:hover, .theme-mini-picker button.picked { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--control)); }
 .profile-popover-rule { height: 1px; margin: 7px 12px; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--border) 90%, transparent) 18%, color-mix(in srgb, var(--border) 90%, transparent) 82%, transparent); }
 .profile-popover .profile-logout { color: #f37b7b; }
