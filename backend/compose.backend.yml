@@ -1,0 +1,12 @@
+services:
+  minecraft-api:
+    build:
+      context: ./backend
+    container_name: minecraft-supabase-api
+    restart: unless-stopped
+    environment:
+      PORT: "8110"
+    ports:
+      - "127.0.0.1:8110:8110"
+    networks:
+      - default

@@ -40,6 +40,7 @@ import {
   UserRound,
 } from "lucide-react";
 import "./styles.css";
+import { monitorBackend } from "./services/backend";
 
 type Theme = "dark" | "oled" | "dusk";
 type SettingsState = {
@@ -1070,6 +1071,9 @@ function App() {
     document.documentElement.style.setProperty("--accent", settings.accent);
     document.documentElement.dataset.theme = settings.theme;
   }, [settings]);
+  useEffect(() => monitorBackend((status) => {
+    document.documentElement.dataset.backend = status?.status === "ok" ? "online" : "offline";
+  }), []);
   useEffect(() => {
     if (profile) localStorage.setItem("bloom-profile", JSON.stringify(profile));
     else localStorage.removeItem("bloom-profile");

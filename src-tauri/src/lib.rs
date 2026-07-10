@@ -4,6 +4,48 @@ use std::sync::{
 };
 use tauri::Emitter;
 
+const BACKEND_URL: &str = match option_env!("BLOOM_BACKEND_URL") {
+    Some(value) => value,
+    None => "https://api.north.bloomclient.org/minecraft",
+};
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackendCapabilities {
+    catalog: bool,
+    modrinth: bool,
+    curseforge: bool,
+    modpacks: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackendStatus {
+    service: String,
+    status: String,
+    api_version: String,
+    capabilities: BackendCapabilities,
+    timestamp: String,
+}
+
+#[tauri::command]
+async fn get_backend_status() -> Result<BackendStatus, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(6))
+        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|error| error.to_string())?
+        .get(format!("{}/health", BACKEND_URL.trim_end_matches('/')))
+        .send()
+        .await
+        .map_err(|error| format!("Bloom backend is unavailable: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Bloom backend rejected the health check: {error}"))?
+        .json::<BackendStatus>()
+        .await
+        .map_err(|error| format!("Bloom backend returned an invalid response: {error}"))
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct MinecraftSession {
     username: String,
@@ -1719,6 +1761,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet,
+            get_backend_status,
             request_microsoft_device_code,
             complete_microsoft_login,
             detect_java_installations,

@@ -16,12 +16,34 @@ React + TypeScript UI
 Windows, files, downloads, Java, Minecraft
 ```
 
+The optional shared service follows a separate path:
+
+```text
+React UI -> Tauri command -> Rust backend client
+                              |
+                              v
+              https://api.north.bloomclient.org/minecraft
+                              |
+                              v
+                 Isolated Minecraft API container
+                              |
+                              v
+               Minecraft Supabase + provider adapters
+```
+
 | Area | Responsibility |
 | --- | --- |
 | `src/` | React screens, components, frontend services, and shared types |
 | `src-tauri/` | Rust commands and native platform integration |
 | `src-tauri/src/commands/` | Small, focused command modules exposed to the frontend |
 | `.github/workflows/` | Reproducible checks and desktop builds |
+| `backend/` | Public Minecraft API boundary and isolated deployment configuration |
+
+## Backend connection
+
+Bloom checks the shared Minecraft API at startup and every 60 seconds through its Rust layer. The default endpoint is `https://api.north.bloomclient.org/minecraft`; release builders can override it with the `BLOOM_BACKEND_URL` environment variable.
+
+Only health and capability discovery are enabled today. Modrinth, CurseForge, catalog, and remote modpack capabilities remain disabled until their real adapters and database migrations are implemented. The desktop client never contains Supabase service-role credentials or provider API keys.
 
 ## Development
 
