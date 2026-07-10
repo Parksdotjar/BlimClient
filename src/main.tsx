@@ -1,7 +1,7 @@
 import { StrictMode, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { animate } from 'animejs';
-import { ChevronDown, ChevronRight, CirclePlus, Cuboid, Download, FolderOpen, House, Layers3, PackageOpen, Palette, Puzzle, Rocket, Settings as SettingsIcon, Shield, SlidersHorizontal, TerminalSquare, WandSparkles } from 'lucide-react';
+import { ChevronDown, ChevronRight, CirclePlus, Cuboid, Download, FolderOpen, House, Layers3, PackageOpen, Palette, Puzzle, Rocket, Settings as SettingsIcon, Shield, SlidersHorizontal, TerminalSquare } from 'lucide-react';
 import './styles.css';
 
 type Theme = 'dark' | 'oled' | 'dusk';
@@ -13,7 +13,7 @@ const settingTabs = [[SettingsIcon, 'General'], [Palette, 'Appearance'], [Slider
 
 function EmptySlot({ title = 'Empty slot', sub = 'Create an instance to get started' }: { title?: string; sub?: string }) { return <div className="empty-slot"><span className="empty-plus">＋</span><div><strong>{title}</strong><p>{sub}</p></div></div>; }
 function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) { const ref = useRef<HTMLSpanElement>(null); const change = () => { const next = !value; onChange(next); if (ref.current) animate(ref.current, { translateX: next ? 16 : 0, duration: 220, ease: 'out(3)' }); }; return <button className={'toggle ' + (value ? 'on' : 'off')} onClick={change} aria-pressed={value}><span ref={ref} /></button>; }
-function Select({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) { return <label className="select-wrap"><select value={value} onChange={e => onChange(e.target.value)}>{options.map(option => <option key={option}>{option}</option>)}</select><ChevronDown size={15} /></label>; }
+function Select({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) { const [open, setOpen] = useState(false); return <div className="select-wrap"><button className="select-trigger" onClick={() => setOpen(!open)} aria-expanded={open}>{value}<ChevronDown size={15} className={open ? 'rotated' : ''} /></button>{open && <div className="select-menu">{options.map(option => <button className={option === value ? 'chosen' : ''} key={option} onClick={() => { onChange(option); setOpen(false); }}>{option}</button>)}</div>}</div>; }
 function SettingRow({ title, description, children }: { title: string; description: string; children: ReactNode }) { return <div className="setting-row"><div><b>{title}</b><p>{description}</p></div>{children}</div>; }
 
 function SettingsPage({ settings, setSettings }: { settings: SettingsState; setSettings: (s: SettingsState) => void }) {
