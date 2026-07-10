@@ -2238,10 +2238,12 @@ body,
 .manager-heading p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
 .manager-tools { display: flex; align-items: center; gap: 10px; }.manager-tools .select-wrap { width: 145px; }
 .add-content { display: flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 15px; border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 12%, var(--control)); color: var(--accent); font-size: 12px; font-weight: 800; }
-.catalog-close, .catalog-install { display: grid; place-items: center; flex: 0 0 auto; border: 0; border-radius: 50%; background: var(--accent); color: #101310; box-shadow: 0 7px 19px color-mix(in srgb, var(--accent) 22%, transparent); }
-.catalog-close { width: 39px; height: 39px; }
+.catalog-install { display: grid; place-items: center; flex: 0 0 auto; border: 0; border-radius: 50%; background: var(--accent); color: #101310; box-shadow: 0 7px 19px color-mix(in srgb, var(--accent) 22%, transparent); }
+.catalog-close { height: 39px; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px 0 11px; border: 1px solid color-mix(in srgb, #ef5a5a 52%, var(--border)); border-radius: 10px; background: color-mix(in srgb, #ef5353 82%, var(--control)); color: #fff; box-shadow: 0 7px 19px color-mix(in srgb, #ef5353 20%, transparent); font-size: 12px; font-weight: 800; }
+.catalog-close::after { content: "Back"; }
 .catalog-install { width: 34px; height: 34px; margin: 0 7px; }
-.catalog-close:hover, .catalog-install:hover:not(:disabled) { transform: translateY(-1px) scale(1.04); }
+.catalog-close:hover { transform: translateY(-1px); background: color-mix(in srgb, #f06262 88%, var(--control)); }
+.catalog-install:hover:not(:disabled) { transform: translateY(-1px) scale(1.04); }
 .catalog-install:disabled { opacity: .4; cursor: wait; }
 .catalog-loading { min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--muted); font-size: 12px; }
 .catalog-loading .loading-dots { color: var(--accent); }

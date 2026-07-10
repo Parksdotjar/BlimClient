@@ -39,7 +39,7 @@ import {
   TerminalSquare,
   Trash2,
   UserRound,
-  X,
+  ArrowLeft as X,
 } from "lucide-react";
 import "./styles.css";
 import { monitorBackend } from "./services/backend";
