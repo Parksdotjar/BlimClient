@@ -1147,6 +1147,7 @@ function App() {
       event.preventDefault();
   };
   const selectedInstance = instances.find(instance => instance.id === selectedInstanceId);
+  const mostRecentInstance = instances[0];
   return (
     <div
       className="app-shell"
@@ -1290,16 +1291,16 @@ function App() {
                 </h1>
                 <p>Ready to play? Launch an instance or get started below.</p>
               </div>
-              <div className="hero-card">
+              {mostRecentInstance ? <div className="hero-card hero-recent-instance">
                 <div className="hero-glow" />
-                <div>
-                  <b>Make something new</b>
-                  <span>Create an instance to start playing</span>
-                </div>
-                <button onClick={() => setPage("new-instance")}>
-                  <CirclePlus size={16} /> Create
-                </button>
-              </div>
+                <span className="hero-instance-icon">{mostRecentInstance.icon ? <img src={mostRecentInstance.icon} alt="" /> : <Cuboid size={25} />}</span>
+                <div><em>Most recent instance</em><b>{mostRecentInstance.name}</b><span>{mostRecentInstance.version} • {mostRecentInstance.loader}</span></div>
+                <button disabled={download.active || gameRunning} onClick={() => void launch(mostRecentInstance)}><Play size={16} fill="currentColor" /> Play</button>
+              </div> : <div className="hero-card">
+                <div className="hero-glow" />
+                <div><b>Make something new</b><span>Create an instance to start playing</span></div>
+                <button onClick={() => setPage("new-instance")}><CirclePlus size={16} /> Create</button>
+              </div>}
             </section>
             <div className="rule" />
             <section>

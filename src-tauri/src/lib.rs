@@ -205,8 +205,10 @@ fn save_instance(config: InstanceConfig) -> Result<InstanceConfig, String> {
 #[tauri::command]
 fn list_instances() -> Result<Vec<InstanceConfig>, String> {
     let folder = bloom_data_dir()?.join("instances");
+    let mut entries = std::fs::read_dir(folder).map_err(|error| error.to_string())?.flatten().collect::<Vec<_>>();
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.metadata().and_then(|metadata| metadata.modified()).ok()));
     let mut instances = Vec::new();
-    for entry in std::fs::read_dir(folder).map_err(|error| error.to_string())?.flatten() { if entry.path().extension().and_then(|extension| extension.to_str()) == Some("json") { if let Ok(bytes) = std::fs::read(entry.path()) { if let Ok(instance) = serde_json::from_slice(&bytes) { instances.push(instance); } } } }
+    for entry in entries { if entry.path().extension().and_then(|extension| extension.to_str()) == Some("json") { if let Ok(bytes) = std::fs::read(entry.path()) { if let Ok(instance) = serde_json::from_slice(&bytes) { instances.push(instance); } } } }
     Ok(instances)
 }
 
