@@ -298,12 +298,14 @@ function SettingsPage({
   onSignOut,
   profile,
   initialTab,
+  navigationKey,
 }: {
   settings: SettingsState;
   setSettings: (s: SettingsState) => void;
   onSignOut: () => void;
   profile: MinecraftProfile | null;
   initialTab?: string;
+  navigationKey: number;
 }) {
   const update = <K extends keyof SettingsState>(
     key: K,
@@ -316,10 +318,7 @@ function SettingsPage({
     const scroller = document.querySelector(".content") as HTMLElement | null;
     if (!target || !scroller) return;
     setActiveTab(label);
-    const destination = Math.max(
-      0,
-      target.offsetTop - scroller.clientHeight / 2 + target.offsetHeight / 2,
-    );
+    const destination = label === "General" ? 0 : Math.max(0, target.offsetTop - scroller.clientHeight / 2 + target.offsetHeight / 2);
     const distance = Math.abs(scroller.scrollTop - destination);
     animate(scroller, {
       scrollTop: destination,
@@ -327,7 +326,7 @@ function SettingsPage({
       ease: "inOut(3)",
     });
   };
-  useEffect(() => { if (!initialTab) return; const timer = window.setTimeout(() => jumpTo(initialTab), 0); return () => window.clearTimeout(timer); }, [initialTab]);
+  useEffect(() => { if (!initialTab) return; const timer = window.setTimeout(() => jumpTo(initialTab), 0); return () => window.clearTimeout(timer); }, [initialTab, navigationKey]);
   const section = (label: string) => ({
     ref: (node: HTMLDivElement | null) => {
       sections.current[label] = node;
@@ -1015,6 +1014,7 @@ function App() {
   });
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [settingsTarget, setSettingsTarget] = useState("General");
+  const [settingsNavigationKey, setSettingsNavigationKey] = useState(0);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -1166,6 +1166,7 @@ function App() {
   const selectedInstance = instances.find(instance => instance.id === selectedInstanceId);
   const mostRecentInstance = instances[0];
   const signOut = () => { void invoke("sign_out_minecraft").finally(() => { setProfile(null); setSignInOpen(false); setProfileMenuOpen(false); }); };
+  const openSettings = (target = "General") => { setSettingsTarget(target); setSettingsNavigationKey(value => value + 1); setPage("settings"); };
   return (
     <div
       className="app-shell"
@@ -1200,7 +1201,7 @@ function App() {
               }
               key={label}
               onClick={() =>
-                label === "Settings" ? setPage("settings") : setPage("home")
+                label === "Settings" ? openSettings() : setPage("home")
               }
             >
               <Icon size={17} />
@@ -1255,11 +1256,11 @@ function App() {
                 <div className="avatar">{profile.name.slice(0, 1).toUpperCase()}</div>
                 <div className="signed-in-name"><b>{profile.name}</b></div>
               </button>
-              <button onClick={() => { setSettingsTarget("General"); setPage("settings"); }}>
+              <button onClick={() => openSettings()}>
                 <SettingsIcon size={16} />
               </button>
               {profileMenuOpen && <div className="profile-popover" onClick={event => event.stopPropagation()}>
-                <button onClick={() => { setProfileMenuOpen(false); setSettingsTarget("My Profile"); setPage("settings"); }}>My profile</button>
+                <button onClick={() => { setProfileMenuOpen(false); openSettings("My Profile"); }}>My profile</button>
                 <div className="profile-popover-rule" />
                 <button className="profile-logout" onClick={signOut}>Log out</button>
               </div>}
@@ -1293,7 +1294,7 @@ function App() {
         ) : page === "downloads" ? (
           <DownloadsPage download={download} instances={instances} completed={completedDownloads} onClear={() => setCompletedDownloads([])} onCancel={() => void invoke("cancel_minecraft_launch")} />
         ) : page === "settings" ? (
-          <SettingsPage settings={settings} setSettings={setSettings} onSignOut={signOut} profile={profile} initialTab={settingsTarget} />
+          <SettingsPage settings={settings} setSettings={setSettings} onSignOut={signOut} profile={profile} initialTab={settingsTarget} navigationKey={settingsNavigationKey} />
         ) : page === "new-instance" ? (
           <NewInstancePage
             onCancel={() => setPage("home")}
