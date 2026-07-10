@@ -1,3 +1,20 @@
+use std::sync::{Arc, Mutex};
+use tauri::Emitter;
+
+#[derive(Clone)]
+struct MinecraftSession { username: String, uuid: String, access_token: String }
+
+#[derive(Default)]
+struct LauncherState { session: Mutex<Option<MinecraftSession>>, launch_active: Arc<Mutex<bool>> }
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LaunchProgress { instance_id: String, state: String, progress: u8, message: String }
+
+fn emit_launch(app: &tauri::AppHandle, instance_id: &str, state: &str, progress: u8, message: impl Into<String>) {
+    let _ = app.emit("minecraft-launch-progress", LaunchProgress { instance_id: instance_id.to_string(), state: state.to_string(), progress, message: message.into() });
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String { format!("Welcome to Bloom Client, {name}!") }
 
@@ -25,7 +42,7 @@ async fn read_auth_response(response: reqwest::Response, service: &str) -> Resul
 }
 
 #[tauri::command]
-async fn complete_microsoft_login(client_id: String, device_code: String, interval: u64, expires_in: u64) -> Result<serde_json::Value, String> {
+async fn complete_microsoft_login(state: tauri::State<'_, LauncherState>, client_id: String, device_code: String, interval: u64, expires_in: u64) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(expires_in);
     let mut wait_seconds = interval.max(5);
@@ -49,6 +66,9 @@ async fn complete_microsoft_login(client_id: String, device_code: String, interv
     let profile_response = client.get("https://api.minecraftservices.com/minecraft/profile").bearer_auth(minecraft_token).send().await.map_err(|error| error.to_string())?;
     let profile = read_auth_response(profile_response, "Minecraft profile").await?;
     if profile.get("id").and_then(|v| v.as_str()).is_none() || profile.get("name").and_then(|v| v.as_str()).is_none() { return Err("No Minecraft profile was found on this account.".into()); }
+    let username = profile["name"].as_str().unwrap_or_default().to_string();
+    let uuid = profile["id"].as_str().unwrap_or_default().to_string();
+    *state.session.lock().map_err(|_| "Unable to save the Minecraft sign-in session.")? = Some(MinecraftSession { username, uuid, access_token: minecraft_token.to_string() });
     Ok(profile)
 }
 
@@ -117,11 +137,83 @@ fn list_instances() -> Result<Vec<InstanceConfig>, String> {
     Ok(instances)
 }
 
+fn load_instance(instance_id: &str) -> Result<InstanceConfig, String> {
+    let path = bloom_data_dir()?.join("instances").join(format!("{instance_id}.json"));
+    let bytes = std::fs::read(path).map_err(|_| "This instance could not be found. Create it again and try once more.".to_string())?;
+    serde_json::from_slice(&bytes).map_err(|_| "This instance configuration is invalid.".to_string())
+}
+
+fn selected_java(config: &InstanceConfig, required: u32) -> Result<std::path::PathBuf, String> {
+    if !config.java.to_ascii_lowercase().starts_with("automatic") && !config.java.trim().is_empty() {
+        let configured_path = config.java.rsplit_once(" — ").map(|(_, path)| path).unwrap_or(&config.java);
+        let found = java_major(configured_path).ok_or("The Java runtime selected for this instance cannot be used.")?;
+        if found < required { return Err(format!("Minecraft {} needs Java {required} or newer, but this instance is set to Java {found}.", config.version)); }
+        return Ok(configured_path.into());
+    }
+    detect_java_installations().into_iter()
+        .filter(|java| java.usable && java.major_version.unwrap_or(0) >= required)
+        .max_by_key(|java| java.major_version.unwrap_or(0))
+        .map(|java| java.path.into())
+        .ok_or_else(|| format!("Minecraft {} needs Java {required} or newer. Install that Java version, then launch again.", config.version))
+}
+
+#[tauri::command]
+fn launch_minecraft(app: tauri::AppHandle, state: tauri::State<'_, LauncherState>, instance_id: String) -> Result<(), String> {
+    {
+        let mut active = state.launch_active.lock().map_err(|_| "The launcher is busy. Try again.")?;
+        if *active { return Err("Something is already downloading or running. Please wait.".into()); }
+        *active = true;
+    }
+    let session = state.session.lock().map_err(|_| "Unable to read the Minecraft sign-in session.")?.clone()
+        .ok_or_else(|| { if let Ok(mut active) = state.launch_active.lock() { *active = false; } "Sign in with Microsoft before launching Minecraft.".to_string() })?;
+    let active = Arc::new(state.launch_active.clone());
+    std::thread::spawn(move || {
+        let config = match load_instance(&instance_id) { Ok(config) => config, Err(error) => { emit_launch(&app, &instance_id, "error", 0, error); if let Ok(mut value) = active.lock() { *value = false; } return; } };
+        emit_launch(&app, &instance_id, "installing", 2, "Preparing Minecraft files");
+        let launcher = mc_launcher_core::launcher::Launcher::new(&config.directory);
+        let mut finished_tasks = 0u8;
+        let app_for_progress = app.clone();
+        let id_for_progress = instance_id.clone();
+        let install = launcher.install_with_progress(mc_launcher_core::install::InstallRequest::vanilla(&config.version), &mut move |event| {
+            use mc_launcher_core::progress::ProgressEvent;
+            match event {
+                ProgressEvent::StageStarted { stage } => emit_launch(&app_for_progress, &id_for_progress, "installing", 4, format!("{:?}", stage)),
+                ProgressEvent::TaskFinished { label } | ProgressEvent::TaskSkipped { label, .. } => { finished_tasks = finished_tasks.saturating_add(1); let progress = 5 + finished_tasks.saturating_mul(2).min(88); emit_launch(&app_for_progress, &id_for_progress, "installing", progress, label); }
+                _ => {}
+            }
+        });
+        let result = (|| -> Result<(), String> {
+            let installed = install.map_err(|error| format!("Minecraft installation failed: {error}"))?;
+            let version = launcher.load_version(&installed.version_id).map_err(|error| format!("Minecraft metadata could not be loaded: {error}"))?;
+            let required_java = version.java_version.as_ref().map(|value| value.major_version.max(8) as u32).unwrap_or(8);
+            let java = selected_java(&config, required_java)?;
+            emit_launch(&app, &instance_id, "launching", 94, format!("Launching with Java {required_java}"));
+            let account = mc_launcher_core::account::Account::Microsoft { username: session.username.clone(), uuid: session.uuid.clone(), access_token: session.access_token.clone() };
+            let options = mc_launcher_core::command::builder::LaunchOptions { account, java_executable: Some(java), game_directory: Some(config.directory.clone().into()), launcher_name: "Bloom Client".into(), launcher_version: env!("CARGO_PKG_VERSION").into(), custom_resolution: if config.custom_resolution { Some((1280, 720)) } else { None }, ..Default::default() };
+            let command = launcher.build_launch_command_from_version(&version, options).map_err(|error| format!("Minecraft launch command could not be built: {error}"))?;
+            let main_index = command.args.iter().position(|arg| version.main_class.as_deref() == Some(arg.as_str())).ok_or("Minecraft launch metadata did not include a main class.")?;
+            let mut args = command.args;
+            args.insert(main_index, format!("-Xmx{}M", config.memory));
+            for argument in config.jvm_arguments.split_whitespace().rev() { args.insert(main_index, argument.to_string()); }
+            let mut process = std::process::Command::new(command.executable);
+            process.args(args).current_dir(command.working_dir).envs(command.env);
+            let mut child = process.spawn().map_err(|error| format!("Minecraft could not start: {error}"))?;
+            emit_launch(&app, &instance_id, "running", 100, "Minecraft is running");
+            let _ = child.wait();
+            Ok(())
+        })();
+        match result { Ok(()) => emit_launch(&app, &instance_id, "idle", 0, "Minecraft closed"), Err(error) => emit_launch(&app, &instance_id, "error", 0, error) }
+        if let Ok(mut value) = active.lock() { *value = false; }
+    });
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(LauncherState::default())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, request_microsoft_device_code, complete_microsoft_login, detect_java_installations, get_minecraft_releases, save_instance, list_instances])
+        .invoke_handler(tauri::generate_handler![greet, request_microsoft_device_code, complete_microsoft_login, detect_java_installations, get_minecraft_releases, save_instance, list_instances, launch_minecraft])
         .run(tauri::generate_context!())
         .expect("error while running Bloom Client");
 }
