@@ -29,8 +29,6 @@ import {
   PackageOpen,
   Palette,
   Play,
-  Moon,
-  Monitor,
   Puzzle,
   Rocket,
   Search,
@@ -38,7 +36,6 @@ import {
   Shield,
   SlidersHorizontal,
   TerminalSquare,
-  Sun,
   Trash2,
   UserRound,
 } from "lucide-react";
@@ -1017,7 +1014,6 @@ function App() {
     }
   });
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [appearanceMenuOpen, setAppearanceMenuOpen] = useState(false);
   const [settingsTarget, setSettingsTarget] = useState("General");
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -1264,7 +1260,6 @@ function App() {
               </button>
               {profileMenuOpen && <div className="profile-popover" onClick={event => event.stopPropagation()}>
                 <button onClick={() => { setProfileMenuOpen(false); setSettingsTarget("My Profile"); setPage("settings"); }}>My profile</button>
-                <div className="profile-appearance-row"><button onClick={() => setAppearanceMenuOpen(value => !value)}>Appearance</button>{appearanceMenuOpen && <div className="theme-mini-picker"><button className={settings.theme === "dark" ? "picked" : ""} onClick={() => setSettings({ ...settings, theme: "dark" })} title="Dark"><Moon size={14} /></button><button className={settings.theme === "oled" ? "picked" : ""} onClick={() => setSettings({ ...settings, theme: "oled" })} title="OLED Dark"><Monitor size={14} /></button><button className={settings.theme === "dusk" ? "picked" : ""} onClick={() => setSettings({ ...settings, theme: "dusk" })} title="Dusk"><Sun size={14} /></button></div>}</div>
                 <div className="profile-popover-rule" />
                 <button className="profile-logout" onClick={signOut}>Log out</button>
               </div>}
