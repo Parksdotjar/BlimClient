@@ -35,6 +35,8 @@ These rules apply to every future screen, component, and interaction in Bloom Cl
 - Content libraries such as mods, resource packs, and shaders show at most 20 entries per page.
 - Search, sorting, and filters apply before pagination, and changing any of them returns the user to page one.
 - Pagination controls use Bloom's custom button styling and remain theme- and accent-aware.
+- Provider catalogs must filter by the instance's exact Minecraft version and loader before showing an install action.
+- Catalog installation uses the accent-filled plus action, reports genuine byte progress through Downloads, and returns to the installed list through an accent-filled close action.
 
 ## Scrollbars
 

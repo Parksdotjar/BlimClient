@@ -28,6 +28,49 @@ struct BackendStatus {
     timestamp: String,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogMod {
+    provider: String,
+    project_id: String,
+    slug: String,
+    title: String,
+    summary: String,
+    icon_url: Option<String>,
+    author: String,
+    downloads: u64,
+    loader: String,
+    game_version: String,
+    version_id: String,
+    version_number: String,
+    file_name: String,
+    file_size: u64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogSearchResult {
+    items: Vec<CatalogMod>,
+    offset: u64,
+    limit: u64,
+    total: u64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogInstallFile {
+    file_name: String,
+    download_url: String,
+    sha1: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogInstallPlan {
+    title: String,
+    files: Vec<CatalogInstallFile>,
+}
+
 #[tauri::command]
 async fn get_backend_status() -> Result<BackendStatus, String> {
     reqwest::Client::builder()
@@ -44,6 +87,37 @@ async fn get_backend_status() -> Result<BackendStatus, String> {
         .json::<BackendStatus>()
         .await
         .map_err(|error| format!("Bloom backend returned an invalid response: {error}"))
+}
+
+#[tauri::command]
+async fn search_modrinth_mods(
+    query: String,
+    game_version: String,
+    offset: u64,
+) -> Result<CatalogSearchResult, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|error| error.to_string())?
+        .get(format!(
+            "{}/v1/catalog/search",
+            BACKEND_URL.trim_end_matches('/')
+        ))
+        .query(&[
+            ("query", query),
+            ("gameVersion", game_version),
+            ("loader", "fabric".to_string()),
+            ("offset", offset.to_string()),
+        ])
+        .send()
+        .await
+        .map_err(|error| format!("The Bloom mod catalog is unavailable: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("The Bloom mod catalog rejected the search: {error}"))?
+        .json::<CatalogSearchResult>()
+        .await
+        .map_err(|error| format!("The Bloom mod catalog returned invalid data: {error}"))
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1341,6 +1415,128 @@ fn execute_download_plan(
     Ok(())
 }
 
+#[tauri::command]
+fn install_modrinth_mod(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, LauncherState>,
+    instance_id: String,
+    project_id: String,
+) -> Result<(), String> {
+    let config = load_instance(&instance_id)?;
+    if !config.loader.eq_ignore_ascii_case("fabric") {
+        return Err("Modrinth mod installation currently supports Fabric instances only.".into());
+    }
+    if !(3..=64).contains(&project_id.len())
+        || !project_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+    {
+        return Err("That Modrinth project ID is invalid.".into());
+    }
+    {
+        let mut active = state
+            .launch_active
+            .lock()
+            .map_err(|_| "The task manager is busy.")?;
+        if *active {
+            return Err("Another download or game launch is already active.".into());
+        }
+        *active = true;
+    }
+    state.cancel_requested.store(false, Ordering::SeqCst);
+    let active = state.launch_active.clone();
+    let cancel = state.cancel_requested.clone();
+    std::thread::spawn(move || {
+        emit_launch(
+            &app,
+            &instance_id,
+            "installing",
+            1,
+            "Resolving Modrinth mod",
+        );
+        let result = (|| -> Result<String, String> {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(20))
+                .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
+                .build()
+                .map_err(|error| error.to_string())?;
+            let plan: CatalogInstallPlan = client
+                .get(format!(
+                    "{}/v1/catalog/modrinth/{}/install",
+                    BACKEND_URL.trim_end_matches('/'),
+                    project_id
+                ))
+                .query(&[("gameVersion", config.version.as_str())])
+                .send()
+                .map_err(|error| format!("Unable to resolve the Modrinth file: {error}"))?
+                .error_for_status()
+                .map_err(|error| format!("Modrinth could not provide a compatible file: {error}"))?
+                .json()
+                .map_err(|error| format!("The mod install plan is invalid: {error}"))?;
+            if plan.files.is_empty() {
+                return Err("The selected mod has no compatible files to install.".into());
+            }
+            let mods = std::path::PathBuf::from(&config.directory).join("mods");
+            std::fs::create_dir_all(&mods).map_err(|error| error.to_string())?;
+            let mut downloads = mc_launcher_core::net::download::DownloadPlan::default();
+            for file in plan.files {
+                if std::path::Path::new(&file.file_name)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    != Some(file.file_name.as_str())
+                {
+                    return Err("Modrinth returned an unsafe mod filename.".into());
+                }
+                if !allowed_pack_download(&file.download_url) {
+                    return Err("Modrinth returned an untrusted download address.".into());
+                }
+                downloads
+                    .tasks
+                    .push(mc_launcher_core::net::download::DownloadTask {
+                        url: file.download_url,
+                        destination: mods.join(&file.file_name),
+                        checksum: file
+                            .sha1
+                            .map(mc_launcher_core::net::download::Checksum::Sha1),
+                        label: file.file_name,
+                    });
+            }
+            execute_download_plan(
+                &app,
+                &instance_id,
+                &downloads,
+                &cancel,
+                3,
+                99,
+                &format!("Installing {}", plan.title),
+                false,
+            )?;
+            Ok(plan.title)
+        })();
+        match result {
+            Ok(title) => emit_launch(
+                &app,
+                &instance_id,
+                "complete",
+                100,
+                format!("Installed {title}"),
+            ),
+            Err(error) if error == "__cancelled__" => emit_launch(
+                &app,
+                &instance_id,
+                "cancelled",
+                0,
+                "Mod installation cancelled",
+            ),
+            Err(error) => emit_launch(&app, &instance_id, "error", 0, error),
+        }
+        if let Ok(mut value) = active.lock() {
+            *value = false;
+        }
+    });
+    Ok(())
+}
+
 fn install_instance_files(
     app: &tauri::AppHandle,
     instance_id: &str,
@@ -1762,6 +1958,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             get_backend_status,
+            search_modrinth_mods,
             request_microsoft_device_code,
             complete_microsoft_login,
             detect_java_installations,
@@ -1774,6 +1971,7 @@ pub fn run() {
             update_instance_settings,
             open_instance_folder,
             import_fabric_modpack,
+            install_modrinth_mod,
             launch_minecraft,
             get_minecraft_launch_status,
             cancel_minecraft_launch,

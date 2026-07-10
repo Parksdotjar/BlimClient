@@ -29,6 +29,7 @@ import {
   PackageOpen,
   Palette,
   Play,
+  Plus,
   Puzzle,
   Rocket,
   Search,
@@ -38,6 +39,7 @@ import {
   TerminalSquare,
   Trash2,
   UserRound,
+  X,
 } from "lucide-react";
 import "./styles.css";
 import { monitorBackend } from "./services/backend";
@@ -961,15 +963,20 @@ function NewInstancePage({
   );
 }
 type InstanceContentItem = { id: string; name: string; version: string; fileName: string; size: number; enabled: boolean; icon?: string | null };
+type CatalogMod = { provider: string; projectId: string; slug: string; title: string; summary: string; iconUrl?: string | null; author: string; downloads: number; loader: string; gameVersion: string; versionId: string; versionNumber: string; fileName: string; fileSize: number };
+type CatalogSearchResult = { items: CatalogMod[]; offset: number; limit: number; total: number };
 type InstanceTab = "mods" | "resourcepacks" | "shaderpacks" | "settings";
 
-function InstancePage({ instance, busy, onPlay, onChanged }: { instance: InstanceDraft; busy: boolean; onPlay: () => void; onChanged: (instance: InstanceDraft) => void }) {
+function InstancePage({ instance, busy, onPlay, onChanged, onInstallMod }: { instance: InstanceDraft; busy: boolean; onPlay: () => void; onChanged: (instance: InstanceDraft) => void; onInstallMod: (mod: CatalogMod) => void }) {
   const [tab, setTab] = useState<InstanceTab>("mods");
   const [items, setItems] = useState<InstanceContentItem[]>([]);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("Name");
   const [filter, setFilter] = useState("All");
   const [contentPage, setContentPage] = useState(1);
+  const [addingMods, setAddingMods] = useState(false);
+  const [catalog, setCatalog] = useState<CatalogSearchResult>({ items: [], offset: 0, limit: 20, total: 0 });
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [name, setName] = useState(instance.name);
@@ -979,7 +986,19 @@ function InstancePage({ instance, busy, onPlay, onChanged }: { instance: Instanc
   const loadContent = async () => { if (tab === "settings") return; try { setItems(await invoke<InstanceContentItem[]>("list_instance_content", { instanceId: instance.id, category: tab })); } catch (error) { setMessage(String(error)); } };
   useEffect(() => { void loadContent(); const timer = window.setInterval(() => void loadContent(), 2500); const focus = () => void loadContent(); window.addEventListener("focus", focus); return () => { window.clearInterval(timer); window.removeEventListener("focus", focus); }; }, [tab, instance.id]);
   useEffect(() => { setName(instance.name); setMemory(instance.memory); setJvmArguments(instance.jvmArguments); }, [instance]);
+  useEffect(() => { if (tab !== "mods") setAddingMods(false); }, [tab]);
   useEffect(() => { setContentPage(1); }, [tab, search, filter, sort, instance.id]);
+  useEffect(() => {
+    if (!addingMods || tab !== "mods") return;
+    setCatalogLoading(true);
+    const timer = window.setTimeout(() => {
+      void invoke<CatalogSearchResult>("search_modrinth_mods", { query: search, gameVersion: instance.version, offset: (contentPage - 1) * 20 })
+        .then((result) => { setCatalog(result); setMessage(""); })
+        .catch((error) => setMessage(String(error)))
+        .finally(() => setCatalogLoading(false));
+    }, search ? 320 : 0);
+    return () => window.clearTimeout(timer);
+  }, [addingMods, tab, search, contentPage, instance.version]);
   const toggleItem = async (item: InstanceContentItem, enabled: boolean) => { try { await invoke("toggle_instance_content", { instanceId: instance.id, category: tab, fileName: item.fileName, enabled }); await loadContent(); } catch (error) { setMessage(String(error)); } };
   const chooseIcon = (file?: File) => { if (!file) return; const reader = new FileReader(); reader.onload = () => { void invoke<InstanceDraft>("set_instance_icon", { instanceId: instance.id, icon: String(reader.result) }).then(onChanged).catch(error => setMessage(String(error))); }; reader.readAsDataURL(file); };
   const saveSettings = async () => { try { const saved = await invoke<InstanceDraft>("update_instance_settings", { instanceId: instance.id, name, memory, jvmArguments }); onChanged(saved); setMessage("Instance settings saved."); } catch (error) { setMessage(String(error)); } };
@@ -988,16 +1007,22 @@ function InstancePage({ instance, busy, onPlay, onChanged }: { instance: Instanc
   const pageCount = Math.max(1, Math.ceil(visibleItems.length / 20));
   const safePage = Math.min(contentPage, pageCount);
   const pagedItems = visibleItems.slice((safePage - 1) * 20, safePage * 20);
+  const catalogPages = Math.max(1, Math.ceil(catalog.total / 20));
+  const openCatalog = () => {
+    if (!instance.loader.toLowerCase().includes("fabric")) { setMessage("The built-in mod catalog currently supports Fabric instances only."); return; }
+    setSearch(""); setContentPage(1); setAddingMods(true); setMessage("");
+  };
+  const closeCatalog = () => { setAddingMods(false); setSearch(""); setContentPage(1); setMessage(""); void loadContent(); };
   const tabs: Array<[InstanceTab, typeof Puzzle, string, string]> = [["mods", Puzzle, "Mods", "Manage your mods"], ["resourcepacks", PackageOpen, "Resource Packs", "Manage resource packs"], ["shaderpacks", Cuboid, "Shaders", "Manage shader packs"], ["settings", SettingsIcon, "Settings", "Configure instance settings"]];
   return <div className="instance-workspace">
     <section className="instance-hero-panel"><div className="instance-identity"><button className="instance-icon-picker" onClick={() => iconInput.current?.click()}>{instance.icon ? <img src={instance.icon} alt="" /> : <Cuboid size={32} />}<span><ImagePlus size={14} /></span></button><input ref={iconInput} type="file" accept="image/png,image/jpeg" hidden onChange={event => chooseIcon(event.target.files?.[0])} /><div><h1>{instance.name}</h1><p>{instance.version} • {instance.loader}</p><small>{instance.directory}</small></div></div><div className="instance-hero-actions"><button className="instance-play" disabled={busy} onClick={onPlay}><Play size={17} fill="currentColor" />Play</button><div className="instance-more-wrap"><button className="instance-more" onClick={() => setMenuOpen(value => !value)}><MoreHorizontal size={20} /></button>{menuOpen && <div className="instance-folder-menu"><button onClick={() => { setMenuOpen(false); void invoke("open_instance_folder", { instanceId: instance.id }); }}>Show in folder</button><button onClick={() => { setMenuOpen(false); void invoke("open_instance_folder", { instanceId: instance.id, category: "mods" }); }}>Open mods folder</button></div>}</div></div>
     <div className="instance-tabs">{tabs.map(([id, Icon, title, description]) => <button key={id} className={tab === id ? "selected" : ""} onClick={() => setTab(id)}><span><Icon size={22} /></span><div><b>{title}</b><small>{description}</small></div></button>)}</div></section>
-    {tab === "settings" ? <section className="instance-manager settings-manager"><div className="manager-heading"><div><h2>Instance Settings</h2><p>Change settings used when this instance launches.</p></div><button className="add-content" onClick={saveSettings}>Save Changes</button></div><div className="instance-settings-grid"><label><span>Name</span><input value={name} onChange={event => setName(event.target.value)} /></label><label><span>Memory <b>{memory} MB</b></span><input type="range" min="1024" max="16384" step="512" value={memory} onChange={event => setMemory(Number(event.target.value))} /></label><label className="wide"><span>JVM Arguments</span><textarea value={jvmArguments} onChange={event => setJvmArguments(event.target.value)} placeholder="Optional Java arguments" /></label></div>{message && <p className="instance-message">{message}</p>}</section> : <section className="instance-manager"><div className="manager-heading"><div><h2>Installed {categoryLabel} <span>{items.length}</span></h2><p>Files placed in this instance's {tab} folder appear automatically.</p></div><div className="manager-tools"><Select value={sort} options={["Name", "Size"]} onChange={setSort} /><button className="add-content" title={`Installing ${categoryLabel.toLowerCase()} in-app is coming later`}><CirclePlus size={16} />Add {categoryLabel}</button></div></div><div className="content-list">{visibleItems.length ? pagedItems.map(item => <div className="content-item" key={item.id}><span className="content-icon">{item.icon ? <img src={item.icon} alt="" /> : <PackageOpen size={22} />}</span><div className="content-name"><b>{item.name}</b><small>{item.version || item.fileName}</small></div><span className="content-loader">{instance.loader}</span><span className="content-size">{item.size >= 1048576 ? `${(item.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(item.size / 1024))} KB`}</span><Toggle value={item.enabled} onChange={value => void toggleItem(item, value)} /><button className="content-dots"><MoreHorizontal size={18} /></button></div>) : <div className="content-empty"><PackageOpen size={24} /><b>No {categoryLabel.toLowerCase()} installed</b><span>Open the folder and drag files here to get started.</span><button onClick={() => void invoke("open_instance_folder", { instanceId: instance.id, category: tab })}>Open folder</button></div>}</div>{visibleItems.length > 20 && <div className="content-pagination"><button disabled={safePage === 1} onClick={() => setContentPage(safePage - 1)}>Previous</button><span>Page <b>{safePage}</b> of {pageCount}</span><button disabled={safePage === pageCount} onClick={() => setContentPage(safePage + 1)}>Next</button></div>}<div className="content-search"><Search size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={`Search ${categoryLabel.toLowerCase()}...`} /><Select value={filter} options={["All", "Enabled", "Disabled"]} onChange={setFilter} /></div>{message && <p className="instance-message">{message}</p>}</section>}
+    {tab === "settings" ? <section className="instance-manager settings-manager"><div className="manager-heading"><div><h2>Instance Settings</h2><p>Change settings used when this instance launches.</p></div><button className="add-content" onClick={saveSettings}>Save Changes</button></div><div className="instance-settings-grid"><label><span>Name</span><input value={name} onChange={event => setName(event.target.value)} /></label><label><span>Memory <b>{memory} MB</b></span><input type="range" min="1024" max="16384" step="512" value={memory} onChange={event => setMemory(Number(event.target.value))} /></label><label className="wide"><span>JVM Arguments</span><textarea value={jvmArguments} onChange={event => setJvmArguments(event.target.value)} placeholder="Optional Java arguments" /></label></div>{message && <p className="instance-message">{message}</p>}</section> : <section className={`instance-manager ${addingMods ? "catalog-manager" : ""}`}><div className="manager-heading"><div><h2>{addingMods ? (search ? "Search Results" : "Featured Mods") : `Installed ${categoryLabel}`} {!addingMods && <span>{items.length}</span>}</h2><p>{addingMods ? `Compatible Fabric mods for Minecraft ${instance.version} from Modrinth.` : `Files placed in this instance's ${tab} folder appear automatically.`}</p></div><div className="manager-tools">{addingMods ? <button className="catalog-close" onClick={closeCatalog} aria-label="Back to installed mods"><X size={17} /></button> : <><Select value={sort} options={["Name", "Size"]} onChange={setSort} /><button className="add-content" onClick={tab === "mods" ? openCatalog : undefined} title={tab === "mods" ? "Browse compatible Modrinth mods" : `Installing ${categoryLabel.toLowerCase()} in-app is coming later`}><CirclePlus size={16} />Add {categoryLabel}</button></>}</div></div><div className="content-list">{addingMods ? (catalogLoading ? <div className="catalog-loading"><i className="loading-dots" /><span>{search ? "Searching Modrinth" : "Loading featured mods"}</span></div> : catalog.items.length ? catalog.items.map(mod => <div className="content-item catalog-item" key={mod.projectId}><span className="content-icon">{mod.iconUrl ? <img src={mod.iconUrl} alt="" /> : <Puzzle size={22} />}</span><div className="content-name"><b>{mod.title}</b><small>{mod.versionNumber} • by {mod.author}</small></div><span className="content-loader">Fabric</span><span className="content-size">{formatBytes(mod.fileSize)}</span><button className="catalog-install" disabled={busy} onClick={() => onInstallMod(mod)} aria-label={`Install ${mod.title}`}><Plus size={18} /></button></div>) : <div className="content-empty"><Search size={24} /><b>No compatible mods found</b><span>Try a different search for Minecraft {instance.version}.</span></div>) : visibleItems.length ? pagedItems.map(item => <div className="content-item" key={item.id}><span className="content-icon">{item.icon ? <img src={item.icon} alt="" /> : <PackageOpen size={22} />}</span><div className="content-name"><b>{item.name}</b><small>{item.version || item.fileName}</small></div><span className="content-loader">{instance.loader}</span><span className="content-size">{formatBytes(item.size)}</span><Toggle value={item.enabled} onChange={value => void toggleItem(item, value)} /><button className="content-dots"><MoreHorizontal size={18} /></button></div>) : <div className="content-empty"><PackageOpen size={24} /><b>No {categoryLabel.toLowerCase()} installed</b><span>Open the folder and drag files here to get started.</span><button onClick={() => void invoke("open_instance_folder", { instanceId: instance.id, category: tab })}>Open folder</button></div>}</div>{addingMods ? catalog.total > 20 && <div className="content-pagination"><button disabled={contentPage === 1 || catalogLoading} onClick={() => setContentPage(page => page - 1)}>Previous</button><span>Page <b>{contentPage}</b> of {catalogPages}</span><button disabled={contentPage >= catalogPages || catalogLoading} onClick={() => setContentPage(page => page + 1)}>Next</button></div> : visibleItems.length > 20 && <div className="content-pagination"><button disabled={safePage === 1} onClick={() => setContentPage(safePage - 1)}>Previous</button><span>Page <b>{safePage}</b> of {pageCount}</span><button disabled={safePage === pageCount} onClick={() => setContentPage(safePage + 1)}>Next</button></div>}<div className="content-search"><Search size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={addingMods ? "Search Modrinth mods..." : `Search ${categoryLabel.toLowerCase()}...`} />{!addingMods && <Select value={filter} options={["All", "Enabled", "Disabled"]} onChange={setFilter} />}</div>{message && <p className="instance-message">{message}</p>}</section>}
   </div>;
 }
 
-type DownloadViewState = { active: boolean; progress: number; state: string; message: string; instanceId?: string; downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number };
-type CompletedDownload = { id: string; name: string; version: string; loader?: string; completedAt: number };
+type DownloadViewState = { active: boolean; progress: number; state: string; message: string; instanceId?: string; downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number; taskName?: string; taskVersion?: string; taskKind?: "mod" | "game" };
+type CompletedDownload = { id: string; name: string; version: string; loader?: string; targetName?: string; kind?: "mod" | "game"; completedAt: number };
 
 const formatBytes = (bytes = 0) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
 function DownloadsPage({ download, instances, completed, onClear, onCancel }: { download: DownloadViewState; instances: InstanceDraft[]; completed: CompletedDownload[]; onClear: () => void; onCancel: () => void }) {
@@ -1009,14 +1034,14 @@ function DownloadsPage({ download, instances, completed, onClear, onCancel }: { 
     <section className="download-section"><h2>Active</h2>
       {download.active || failed ? <div className={`download-task active-task ${failed ? "failed-task" : ""}`}>
         <span className="download-task-icon"><Cuboid size={24} /></span>
-        <div className="download-task-main"><div className="download-task-title"><div><b>{activeInstance?.name || "Minecraft"}</b><small>{activeInstance ? `${activeInstance.version} • ${activeInstance.loader}` : "Preparing instance"}</small></div><span>{Math.round(download.progress)}%</span></div><div className="download-linear"><i style={{ width: `${download.progress}%` }} /></div></div>
+        <div className="download-task-main"><div className="download-task-title"><div><b>{download.taskName || activeInstance?.name || "Minecraft"}</b><small>{download.taskKind === "mod" ? `${download.taskVersion || "Fabric mod"} • Installing to ${activeInstance?.name || "instance"}` : activeInstance ? `${activeInstance.version} • ${activeInstance.loader}` : "Preparing instance"}</small></div><span>{Math.round(download.progress)}%</span></div><div className="download-linear"><i style={{ width: `${download.progress}%` }} /></div></div>
         <div className="download-metrics"><span>{failed ? "Task stopped" : download.totalBytes ? `${formatBytes(download.downloadedBytes)} / ${formatBytes(download.totalBytes)}` : "Scanning files"}</span><small>{failed ? "See error" : download.bytesPerSecond ? `${formatBytes(download.bytesPerSecond)}/s` : "Calculating speed"}</small></div>
         <div className="download-task-status"><b>{status}</b><small title={download.message}>{download.message || "Preparing files"}{download.message === "Loading assets" && <i className="loading-dots" />}</small></div>{!failed && <button className="cancel-download" onClick={onCancel} aria-label="Cancel task">×</button>}
       </div> : <div className="downloads-empty"><Download size={20} /><div><b>No active downloads</b><span>New Minecraft installations will appear here.</span></div></div>}
     </section>
     <section className="download-section completed-section"><h2>Completed</h2>
       {completed.length ? completed.map(item => <div className="download-task completed-task" key={item.id}>
-        <span className="download-task-icon"><Cuboid size={22} /></span><div className="download-task-main"><b>{item.name}</b><small>{item.version} • {item.loader || "Vanilla"}</small></div><span className="completed-time">Completed {new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-Math.max(1, Math.round((Date.now() - item.completedAt) / 60000)), "minute")}</span><Check className="completed-check" size={20} />
+        <span className="download-task-icon">{item.kind === "mod" ? <Puzzle size={22} /> : <Cuboid size={22} />}</span><div className="download-task-main"><b>{item.name}</b><small>{item.kind === "mod" ? `${item.version} • Installed to ${item.targetName}` : `${item.version} • ${item.loader || "Vanilla"}`}</small></div><span className="completed-time">Completed {new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-Math.max(1, Math.round((Date.now() - item.completedAt) / 60000)), "minute")}</span><Check className="completed-check" size={20} />
       </div>) : <div className="downloads-empty compact"><Check size={18} /><div><b>No completed downloads yet</b><span>Finished installations will be saved here.</span></div></div>}
     </section>
     <footer className="downloads-footer"><span>Downloads are saved inside each instance directory.</span><button disabled={!completed.length} onClick={onClear}><Trash2 size={16} />Clear Completed</button></footer>
@@ -1097,7 +1122,7 @@ function App() {
       (event) => {
         const next = event.payload;
         if (next.state === "installing") lastCompletedTask.current = "";
-        setDownload({
+        setDownload((current) => ({
           active: next.state === "installing" || next.state === "launching" || next.state === "running" || next.state === "complete",
           progress: next.progress,
           state: next.state,
@@ -1106,7 +1131,10 @@ function App() {
           downloadedBytes: next.downloadedBytes,
           totalBytes: next.totalBytes,
           bytesPerSecond: next.bytesPerSecond,
-        });
+          taskName: current.instanceId === next.instanceId ? current.taskName : undefined,
+          taskVersion: current.instanceId === next.instanceId ? current.taskVersion : undefined,
+          taskKind: current.instanceId === next.instanceId ? current.taskKind : undefined,
+        }));
         if (next.state === "error") {
           setGameRunning(false);
           setToast(next.message);
@@ -1145,8 +1173,11 @@ function App() {
     const instance = instances.find(item => item.id === download.instanceId);
     if (!instance) return;
     lastCompletedTask.current = completionKey;
-    setCompletedDownloads(current => [{ id: `${instance.id}-${Date.now()}`, name: instance.name, version: instance.version, loader: instance.loader, completedAt: Date.now() }, ...current.filter(item => item.name !== instance.name || item.version !== instance.version)].slice(0, 5));
-  }, [download.state, download.instanceId, instances]);
+    const completedItem: CompletedDownload = download.taskKind === "mod"
+      ? { id: `${instance.id}-${Date.now()}`, name: download.taskName || "Mod", version: download.taskVersion || "Fabric", targetName: instance.name, kind: "mod", completedAt: Date.now() }
+      : { id: `${instance.id}-${Date.now()}`, name: instance.name, version: instance.version, loader: instance.loader, kind: "game", completedAt: Date.now() };
+    setCompletedDownloads(current => [completedItem, ...current.filter(item => item.name !== completedItem.name || item.targetName !== completedItem.targetName)].slice(0, 5));
+  }, [download.state, download.instanceId, download.taskKind, download.taskName, download.taskVersion, instances]);
   useEffect(() => {
     if (!download.active) {
       if (download.state === "idle") setRingProgress(0);
@@ -1172,7 +1203,7 @@ function App() {
   useEffect(() => {
     const poll = window.setInterval(() => {
       void invoke<DownloadViewState>("get_minecraft_launch_status").then((status) => {
-        if (status.state === "installing" || status.state === "launching") setDownload({ ...status, active: true });
+        if (status.state === "installing" || status.state === "launching") setDownload(current => ({ ...status, active: true, taskName: current.instanceId === status.instanceId ? current.taskName : undefined, taskVersion: current.instanceId === status.instanceId ? current.taskVersion : undefined, taskKind: current.instanceId === status.instanceId ? current.taskKind : undefined }));
       }).catch(() => {});
     }, 250);
     return () => window.clearInterval(poll);
@@ -1189,6 +1220,7 @@ function App() {
       state: "installing",
       message: "Preparing Minecraft download",
       instanceId: instance.id,
+      taskKind: "game",
     });
     try {
       await invoke("launch_minecraft", { instanceId: instance.id });
@@ -1198,6 +1230,21 @@ function App() {
         setSignInOpen(true);
         setToast("Your saved profile needs a quick Microsoft reconnect before launching.");
       } else setToast(message);
+      setDownload({ active: false, progress: 0, state: "idle", message: "" });
+      window.setTimeout(() => setToast(""), 5000);
+    }
+  };
+  const installMod = async (instance: InstanceDraft, mod: CatalogMod) => {
+    if (download.active || gameRunning) {
+      setToast("Something is already downloading or running. Please wait.");
+      window.setTimeout(() => setToast(""), 3500);
+      return;
+    }
+    setDownload({ active: true, progress: 1, state: "installing", message: `Resolving ${mod.title}`, instanceId: instance.id, taskName: mod.title, taskVersion: mod.versionNumber, taskKind: "mod" });
+    try {
+      await invoke("install_modrinth_mod", { instanceId: instance.id, projectId: mod.projectId });
+    } catch (error) {
+      setToast(String(error));
       setDownload({ active: false, progress: 0, state: "idle", message: "" });
       window.setTimeout(() => setToast(""), 5000);
     }
@@ -1341,7 +1388,7 @@ function App() {
       </aside>
       <main className="content">
         {page === "instance" && selectedInstance ? (
-          <InstancePage instance={selectedInstance} busy={download.active || gameRunning} onPlay={() => void launch(selectedInstance)} onChanged={(changed) => setInstances(current => current.map(instance => instance.id === changed.id ? changed : instance))} />
+          <InstancePage instance={selectedInstance} busy={download.active || gameRunning} onPlay={() => void launch(selectedInstance)} onInstallMod={(mod) => void installMod(selectedInstance, mod)} onChanged={(changed) => setInstances(current => current.map(instance => instance.id === changed.id ? changed : instance))} />
         ) : page === "downloads" ? (
           <DownloadsPage download={download} instances={instances} completed={completedDownloads} onClear={() => setCompletedDownloads([])} onCancel={() => void invoke("cancel_minecraft_launch")} />
         ) : page === "settings" ? (

@@ -43,7 +43,7 @@ React UI -> Tauri command -> Rust backend client
 
 Bloom checks the shared Minecraft API at startup and every 60 seconds through its Rust layer. The default endpoint is `https://api.north.bloomclient.org/minecraft`; release builders can override it with the `BLOOM_BACKEND_URL` environment variable.
 
-Only health and capability discovery are enabled today. Modrinth, CurseForge, catalog, and remote modpack capabilities remain disabled until their real adapters and database migrations are implemented. The desktop client never contains Supabase service-role credentials or provider API keys.
+Health, capability discovery, and the Fabric-only Modrinth catalog are enabled today. CurseForge and remote modpack capabilities remain disabled until their real adapters and database migrations are implemented. The desktop client never contains Supabase service-role credentials or provider API keys.
 
 ## Development
 
