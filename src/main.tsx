@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import { StrictMode, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Archive, ArrowDownToLine, ChevronRight, CirclePlus, Cuboid, Download, FolderOpen, Gamepad2, House, Layers3, List, PackageOpen, Puzzle, Settings, Sparkles, TerminalSquare, WandSparkles } from 'lucide-react';
 import './styles.css';
@@ -18,7 +18,18 @@ function EmptySlot({ title = 'Empty slot', sub = 'Create an instance to get star
 }
 
 function App() {
-  return <div className="app-shell">
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const hideContextMenu = () => setContextMenu(null);
+  const handleContextMenu = (event: MouseEvent) => {
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY });
+  };
+  const handleKeyDown = (event: KeyboardEvent) => {
+    const blocked = event.key === 'F12' || (event.ctrlKey && event.shiftKey && ['i', 'j', 'c'].includes(event.key.toLowerCase())) || (event.ctrlKey && event.key.toLowerCase() === 'u');
+    if (blocked) event.preventDefault();
+  };
+
+  return <div className="app-shell" onContextMenu={handleContextMenu} onClick={hideContextMenu} onKeyDown={handleKeyDown} tabIndex={-1}>
     <aside className="sidebar">
       <div className="brand"><img src="/bloom-logo.png" alt="Bloom logo" /><div><b>Bloom Client</b><span>Minecraft Client</span></div></div>
       <button className="new-instance"><CirclePlus size={18} /> <span>New instance</span></button>
@@ -38,6 +49,7 @@ function App() {
       <section><h2>Quick Actions</h2><div className="quick-grid">{quickActions.map(([Icon, title, desc, color]) => <button className="quick-card" key={title as string}><span className={'quick-icon ' + color}><Icon size={25} strokeWidth={1.8} /></span><span><b>{title as string}</b><small>{desc as string}</small></span></button>)}</div></section>
       <div className="columns"><section className="recent"><div className="section-heading"><h2>Recent Instances</h2><button>View all <ChevronRight size={15} /></button></div>{[1,2,3,4].map(i => <EmptySlot key={i} />)}<button className="view-all">View all instances <ChevronRight size={16} /></button></section><section className="whats-new"><div className="section-heading"><h2>What's New</h2><button>View all <ChevronRight size={15} /></button></div>{[1,2,3].map(i => <EmptySlot key={i} title="Nothing new yet" sub="Updates and news will appear here" />)}</section></div>
     </main>
+    {contextMenu && <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={hideContextMenu}><div className="context-menu-title">Quick actions</div><button>Coming soon</button><button>Coming soon</button><button>Coming soon</button></div>}
   </div>;
 }
 

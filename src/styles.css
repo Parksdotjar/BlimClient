@@ -13,3 +13,10 @@ nav button.active svg{color:#abec79}
 .section-heading button,.view-all{display:inline-flex;align-items:center;justify-content:center;gap:3px;line-height:1}
 .section-heading button svg,.view-all svg{display:block;flex:0 0 auto}
 .view-all{gap:6px}
+
+/* Native-style custom context menu */
+.app-shell{position:relative;outline:none}
+.context-menu{position:fixed;z-index:1000;width:190px;padding:7px;border:1px solid #354044;border-radius:9px;background:#1b2224;box-shadow:0 14px 35px #0008;transform:translate(0,0)}
+.context-menu-title{padding:7px 9px 8px;color:#8d999c;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.context-menu button{display:block;width:100%;padding:9px;border:0;border-radius:6px;background:transparent;text-align:left;color:#c5cece;font-size:13px}
+.context-menu button:hover{background:#293335;color:#a9ed7a}
