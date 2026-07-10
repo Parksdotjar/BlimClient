@@ -128,3 +128,7 @@ html,body,.app-shell{background:var(--page);color:#f1f4f1}.sidebar{background:li
 /* Two-state compact sign-in box */
 .signin-panel{min-height:106px;height:106px;padding:9px 12px;justify-content:center}.signin-panel .device-code{margin:0;min-height:43px;padding:8px 11px}.handoff-box{transition:background 180ms ease,border-color 180ms ease}.handoff-ready{animation:handoff-box-in 260ms cubic-bezier(.22,1,.36,1)}.handoff-link{width:100%;height:100%;display:flex;align-items:center;justify-content:center;gap:5px;border:0;background:transparent;color:var(--accent);font:inherit;font-size:12px;font-weight:700}.copy-toast{top:-22px}.next-step-cue{display:none}@keyframes handoff-box-in{from{opacity:.25;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 
+
+/* Correct post-copy handoff and copy-pill clearance */
+.signin-panel .device-code > .handoff-link{width:100%;min-width:0;height:42px;padding:0;display:flex;align-items:center;justify-content:center;gap:7px;border:0;border-radius:7px;background:transparent;color:var(--accent);font:inherit;font-size:12px;font-weight:700;white-space:nowrap}.signin-panel .device-code > .handoff-link svg{flex:0 0 auto}.signin-panel .copy-toast{top:-42px;z-index:10;animation:copy-pill-clear-card 2s cubic-bezier(.22,1,.36,1) both}@keyframes copy-pill-clear-card{0%{opacity:0;transform:translate(-50%,62px)}18%,72%{opacity:1;transform:translate(-50%,0)}100%{opacity:0;transform:translate(-50%,-18px)}}
+
