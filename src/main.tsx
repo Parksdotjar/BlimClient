@@ -649,6 +649,7 @@ function SettingsPage({
 type InstanceDraft = {
   id: string;
   name: string;
+  loader: string;
   version: string;
   directory: string;
   java: string;
@@ -679,6 +680,7 @@ function NewInstancePage({
   const [draft, setDraft] = useState<InstanceDraft>({
     id: "",
     name: "",
+    loader: "Vanilla",
     version: "Latest release",
     directory: ".minecraft/instances/",
     java: "Automatic (Recommended)",
@@ -721,7 +723,7 @@ function NewInstancePage({
       });
       setDraft(saved);
       setMessage(
-        "Instance created. Vanilla game installation is the next native step.",
+        `${saved.loader} instance created and ready to install.`,
       );
       onCreated();
     } catch (error) {
@@ -764,6 +766,10 @@ function NewInstancePage({
               onChange={(event) => update("name", event.target.value)}
               placeholder="Enter instance name…"
             />
+          </label>
+          <label className="instance-field">
+            <span>Loader</span>
+            <Select value={draft.loader} options={["Vanilla", "Fabric"]} onChange={(value) => update("loader", value)} />
           </label>
           <label className="instance-field">
             <span>Version</span>
@@ -907,7 +913,7 @@ function NewInstancePage({
   );
 }
 type DownloadViewState = { active: boolean; progress: number; state: string; message: string; instanceId?: string; downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number };
-type CompletedDownload = { id: string; name: string; version: string; completedAt: number };
+type CompletedDownload = { id: string; name: string; version: string; loader?: string; completedAt: number };
 
 const formatBytes = (bytes = 0) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
 function DownloadsPage({ download, instances, completed, onClear, onCancel }: { download: DownloadViewState; instances: InstanceDraft[]; completed: CompletedDownload[]; onClear: () => void; onCancel: () => void }) {
@@ -918,14 +924,14 @@ function DownloadsPage({ download, instances, completed, onClear, onCancel }: { 
     <section className="download-section"><h2>Active</h2>
       {download.active ? <div className="download-task active-task">
         <span className="download-task-icon"><Cuboid size={24} /></span>
-        <div className="download-task-main"><div className="download-task-title"><div><b>{activeInstance?.name || "Minecraft"}</b><small>{activeInstance ? `${activeInstance.version} • Vanilla` : "Preparing instance"}</small></div><span>{Math.round(download.progress)}%</span></div><div className="download-linear"><i style={{ width: `${download.progress}%` }} /></div></div>
+        <div className="download-task-main"><div className="download-task-title"><div><b>{activeInstance?.name || "Minecraft"}</b><small>{activeInstance ? `${activeInstance.version} • ${activeInstance.loader}` : "Preparing instance"}</small></div><span>{Math.round(download.progress)}%</span></div><div className="download-linear"><i style={{ width: `${download.progress}%` }} /></div></div>
         <div className="download-metrics"><span>{download.totalBytes ? `${formatBytes(download.downloadedBytes)} / ${formatBytes(download.totalBytes)}` : "Scanning files"}</span><small>{download.bytesPerSecond ? `${formatBytes(download.bytesPerSecond)}/s` : "Calculating speed"}</small></div>
         <div className="download-task-status"><b>{status}</b><small>{download.message || "Preparing files"}{download.message === "Loading assets" && <i className="loading-dots" />}</small></div><button className="cancel-download" onClick={onCancel} aria-label="Cancel task">×</button>
       </div> : <div className="downloads-empty"><Download size={20} /><div><b>No active downloads</b><span>New Minecraft installations will appear here.</span></div></div>}
     </section>
     <section className="download-section completed-section"><h2>Completed</h2>
       {completed.length ? completed.map(item => <div className="download-task completed-task" key={item.id}>
-        <span className="download-task-icon"><Cuboid size={22} /></span><div className="download-task-main"><b>{item.name}</b><small>{item.version} • Vanilla</small></div><span className="completed-time">Completed {new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-Math.max(1, Math.round((Date.now() - item.completedAt) / 60000)), "minute")}</span><Check className="completed-check" size={20} />
+        <span className="download-task-icon"><Cuboid size={22} /></span><div className="download-task-main"><b>{item.name}</b><small>{item.version} • {item.loader || "Vanilla"}</small></div><span className="completed-time">Completed {new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-Math.max(1, Math.round((Date.now() - item.completedAt) / 60000)), "minute")}</span><Check className="completed-check" size={20} />
       </div>) : <div className="downloads-empty compact"><Check size={18} /><div><b>No completed downloads yet</b><span>Finished installations will be saved here.</span></div></div>}
     </section>
     <footer className="downloads-footer"><span>Downloads are saved inside each instance directory.</span><button disabled={!completed.length} onClick={onClear}><Trash2 size={16} />Clear Completed</button></footer>
@@ -1034,7 +1040,7 @@ function App() {
     if (download.state !== "running" || !download.instanceId) return;
     const instance = instances.find(item => item.id === download.instanceId);
     if (!instance) return;
-    setCompletedDownloads(current => [{ id: `${instance.id}-${Date.now()}`, name: instance.name, version: instance.version, completedAt: Date.now() }, ...current.filter(item => item.name !== instance.name || item.version !== instance.version)].slice(0, 5));
+    setCompletedDownloads(current => [{ id: `${instance.id}-${Date.now()}`, name: instance.name, version: instance.version, loader: instance.loader, completedAt: Date.now() }, ...current.filter(item => item.name !== instance.name || item.version !== instance.version)].slice(0, 5));
   }, [download.state, download.instanceId, instances]);
   useEffect(() => {
     if (!download.active) {
@@ -1286,7 +1292,7 @@ function App() {
                         <span className="instance-dot" />
                         <div>
                           <b>{instance.name}</b>
-                          <small>{instance.version} • Vanilla</small>
+                          <small>{instance.version} • {instance.loader}</small>
                         </div>
                         <button
                           className="play-instance"

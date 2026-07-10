@@ -144,10 +144,12 @@ struct JavaInstallation { path: String, major_version: Option<u32>, usable: bool
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct InstanceConfig {
-    id: String, name: String, version: String, directory: String, java: String, memory: u32,
+    id: String, name: String, #[serde(default = "default_loader")] loader: String, version: String, directory: String, java: String, memory: u32,
     jvm_arguments: String, mods: bool, resource_packs: bool, shader_packs: bool, config: bool,
     custom_resolution: bool, visible: bool, shortcut: bool,
 }
+
+fn default_loader() -> String { "Vanilla".to_string() }
 
 fn bloom_data_dir() -> Result<std::path::PathBuf, String> {
     let appdata = std::env::var("APPDATA").map_err(|_| "APPDATA is unavailable on this computer.".to_string())?;
@@ -188,7 +190,7 @@ fn save_instance(config: InstanceConfig) -> Result<InstanceConfig, String> {
     let game_dir = if config.directory.starts_with(".minecraft") { std::env::var("APPDATA").map_err(|_| "APPDATA is unavailable.".to_string())?.into() } else { std::path::PathBuf::from(&config.directory) };
     let target = if config.directory.starts_with(".minecraft") { game_dir.join(&config.directory) } else { game_dir };
     std::fs::create_dir_all(&target).map_err(|error| error.to_string())?;
-    for (enabled, folder) in [(config.mods, "mods"), (config.resource_packs, "resourcepacks"), (config.shader_packs, "shaderpacks"), (config.config, "config")] { if enabled { std::fs::create_dir_all(target.join(folder)).map_err(|error| error.to_string())?; } }
+    for (enabled, folder) in [(config.mods || config.loader.eq_ignore_ascii_case("fabric"), "mods"), (config.resource_packs, "resourcepacks"), (config.shader_packs, "shaderpacks"), (config.config, "config")] { if enabled { std::fs::create_dir_all(target.join(folder)).map_err(|error| error.to_string())?; } }
     config.directory = target.to_string_lossy().to_string();
     let path = bloom_data_dir()?.join("instances").join(format!("{}.json", config.id));
     std::fs::write(path, serde_json::to_vec_pretty(&config).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
@@ -207,6 +209,25 @@ fn load_instance(instance_id: &str) -> Result<InstanceConfig, String> {
     let path = bloom_data_dir()?.join("instances").join(format!("{instance_id}.json"));
     let bytes = std::fs::read(path).map_err(|_| "This instance could not be found. Create it again and try once more.".to_string())?;
     serde_json::from_slice(&bytes).map_err(|_| "This instance configuration is invalid.".to_string())
+}
+
+fn install_fabric_api(config: &InstanceConfig) -> Result<(), String> {
+    let mods = std::path::PathBuf::from(&config.directory).join("mods");
+    std::fs::create_dir_all(&mods).map_err(|error| error.to_string())?;
+    let destination = mods.join("fabric-api-bloom.jar");
+    if destination.exists() { return Ok(()); }
+    let client = reqwest::blocking::Client::builder().user_agent("BloomClient/0.1.0 (https://bloomclient.org)").build().map_err(|error| error.to_string())?;
+    let loaders = serde_json::to_string(&["fabric"]).map_err(|error| error.to_string())?;
+    let game_versions = serde_json::to_string(&[config.version.as_str()]).map_err(|error| error.to_string())?;
+    let versions: serde_json::Value = client.get("https://api.modrinth.com/v2/project/fabric-api/version").query(&[("loaders", loaders), ("game_versions", game_versions), ("include_changelog", "false".to_string())]).send().map_err(|error| format!("Fabric API version lookup failed: {error}"))?.error_for_status().map_err(|error| format!("Fabric API version lookup failed: {error}"))?.json().map_err(|error| error.to_string())?;
+    let version = versions.as_array().and_then(|items| items.iter().find(|item| item["version_type"] == "release").or_else(|| items.first())).ok_or_else(|| format!("Fabric API does not currently provide a build for Minecraft {}.", config.version))?;
+    let file = version["files"].as_array().and_then(|files| files.iter().find(|file| file["primary"] == true).or_else(|| files.first())).ok_or("Fabric API metadata did not include a downloadable file.")?;
+    let url = file["url"].as_str().ok_or("Fabric API metadata did not include a download URL.")?;
+    let bytes = client.get(url).send().map_err(|error| format!("Fabric API download failed: {error}"))?.error_for_status().map_err(|error| format!("Fabric API download failed: {error}"))?.bytes().map_err(|error| error.to_string())?;
+    let temporary = mods.join("fabric-api-bloom.jar.part");
+    std::fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    std::fs::rename(&temporary, &destination).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn selected_java(config: &InstanceConfig, required: u32) -> Result<std::path::PathBuf, String> {
@@ -246,7 +267,10 @@ async fn launch_minecraft(app: tauri::AppHandle, state: tauri::State<'_, Launche
         let mut loading_assets = false;
         let app_for_progress = app.clone();
         let id_for_progress = instance_id.clone();
-        let install = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| launcher.install_with_progress(mc_launcher_core::install::InstallRequest::vanilla(&config.version), &mut move |event| {
+        let install_request = if config.loader.eq_ignore_ascii_case("fabric") {
+            mc_launcher_core::install::InstallRequest { minecraft_version: config.version.clone(), loader: Some(mc_launcher_core::loader::common::LoaderSpec::Fabric { version: mc_launcher_core::loader::common::LoaderVersion::LatestStable }), java: mc_launcher_core::install::JavaInstallPolicy::Auto }
+        } else { mc_launcher_core::install::InstallRequest::vanilla(&config.version) };
+        let install = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| launcher.install_with_progress(install_request, &mut move |event| {
             use mc_launcher_core::progress::ProgressEvent;
             if cancel_requested.load(Ordering::SeqCst) { std::panic::panic_any("bloom-download-cancelled"); }
             match event {
@@ -272,6 +296,7 @@ async fn launch_minecraft(app: tauri::AppHandle, state: tauri::State<'_, Launche
         let install = match install { Ok(result) => result, Err(_) => { emit_launch(&app, &instance_id, "cancelled", 0, "Download cancelled"); if let Ok(mut value) = active.lock() { *value = false; } return; } };
         let result = (|| -> Result<(), String> {
             let installed = install.map_err(|error| format!("Minecraft installation failed: {error}"))?;
+            if config.loader.eq_ignore_ascii_case("fabric") { emit_launch(&app, &instance_id, "installing", 92, "Installing Fabric API"); install_fabric_api(&config)?; }
             let version = launcher.load_version(&installed.version_id).map_err(|error| format!("Minecraft metadata could not be loaded: {error}"))?;
             let required_java = version.java_version.as_ref().map(|value| value.major_version.max(8) as u32).unwrap_or(8);
             let java = selected_java(&config, required_java)?;
