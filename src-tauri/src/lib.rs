@@ -13,6 +13,17 @@ async fn request_microsoft_device_code(client_id: String) -> Result<serde_json::
     Ok(body)
 }
 
+async fn read_auth_response(response: reqwest::Response, service: &str) -> Result<serde_json::Value, String> {
+    let status = response.status();
+    let text = response.text().await.map_err(|error| error.to_string())?;
+    let body: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({ "raw": text }));
+    if !status.is_success() {
+        let detail = body.get("Message").or_else(|| body.get("error_description")).or_else(|| body.get("error")).and_then(|value| value.as_str()).unwrap_or("No additional details.");
+        return Err(format!("{service} rejected the account (HTTP {status}): {detail}"));
+    }
+    Ok(body)
+}
+
 #[tauri::command]
 async fn complete_microsoft_login(client_id: String, device_code: String, interval: u64, expires_in: u64) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
@@ -26,13 +37,17 @@ async fn complete_microsoft_login(client_id: String, device_code: String, interv
         if let Some(token) = body.get("access_token").and_then(|v| v.as_str()) { break token.to_string(); }
         match body.get("error").and_then(|v| v.as_str()) { Some("authorization_pending") => continue, Some("slow_down") => { wait_seconds += 5; continue; }, _ => return Err(body.get("error_description").and_then(|v| v.as_str()).unwrap_or("Microsoft sign-in failed.").to_string()) }
     };
-    let xbl: serde_json::Value = client.post("https://user.auth.xboxlive.com/user/authenticate").json(&serde_json::json!({"Properties":{"AuthMethod":"RPS","SiteName":"user.auth.xboxlive.com","RpsTicket":format!("d={access_token}")},"RelyingParty":"http://auth.xboxlive.com","TokenType":"JWT"})).send().await.map_err(|error| error.to_string())?.json().await.map_err(|error| error.to_string())?;
-    let xsts: serde_json::Value = client.post("https://xsts.auth.xboxlive.com/xsts/authorize").json(&serde_json::json!({"Properties":{"SandboxId":"RETAIL","UserTokens":[xbl["Token"]]},"RelyingParty":"rp://api.minecraftservices.com/","TokenType":"JWT"})).send().await.map_err(|error| error.to_string())?.json().await.map_err(|error| error.to_string())?;
+    let xbl_response = client.post("https://user.auth.xboxlive.com/user/authenticate").json(&serde_json::json!({"Properties":{"AuthMethod":"RPS","SiteName":"user.auth.xboxlive.com","RpsTicket":format!("d={access_token}")},"RelyingParty":"http://auth.xboxlive.com","TokenType":"JWT"})).send().await.map_err(|error| error.to_string())?;
+    let xbl = read_auth_response(xbl_response, "Xbox Live").await?;
+    let xsts_response = client.post("https://xsts.auth.xboxlive.com/xsts/authorize").json(&serde_json::json!({"Properties":{"SandboxId":"RETAIL","UserTokens":[xbl["Token"]]},"RelyingParty":"rp://api.minecraftservices.com/","TokenType":"JWT"})).send().await.map_err(|error| error.to_string())?;
+    let xsts = read_auth_response(xsts_response, "Xbox security").await?;
     let identity = xsts["DisplayClaims"]["xui"][0]["uhs"].as_str().ok_or("Xbox authentication did not return a user identity.")?;
     let xsts_token = xsts["Token"].as_str().ok_or("Xbox authentication did not return an XSTS token.")?;
-    let minecraft: serde_json::Value = client.post("https://api.minecraftservices.com/authentication/login_with_xbox").json(&serde_json::json!({"identityToken":format!("XBL3.0 x={identity};{xsts_token}")})).send().await.map_err(|error| error.to_string())?.json().await.map_err(|error| error.to_string())?;
+    let minecraft_response = client.post("https://api.minecraftservices.com/authentication/login_with_xbox").json(&serde_json::json!({"identityToken":format!("XBL3.0 x={identity};{xsts_token}")})).send().await.map_err(|error| error.to_string())?;
+    let minecraft = read_auth_response(minecraft_response, "Minecraft services").await?;
     let minecraft_token = minecraft["access_token"].as_str().ok_or("Minecraft services login failed. Make sure this Microsoft account owns Minecraft.")?;
-    let profile: serde_json::Value = client.get("https://api.minecraftservices.com/minecraft/profile").bearer_auth(minecraft_token).send().await.map_err(|error| error.to_string())?.json().await.map_err(|error| error.to_string())?;
+    let profile_response = client.get("https://api.minecraftservices.com/minecraft/profile").bearer_auth(minecraft_token).send().await.map_err(|error| error.to_string())?;
+    let profile = read_auth_response(profile_response, "Minecraft profile").await?;
     if profile.get("id").and_then(|v| v.as_str()).is_none() || profile.get("name").and_then(|v| v.as_str()).is_none() { return Err("No Minecraft profile was found on this account.".into()); }
     Ok(profile)
 }
