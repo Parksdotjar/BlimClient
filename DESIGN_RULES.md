@@ -8,6 +8,9 @@ These rules apply to every future screen, component, and interaction in Bloom Cl
 - Use Lucide icons consistently. Do not introduce text-symbol icons, emoji, or mixed icon families.
 - Keep controls slightly rounded, compact, and intentional. Avoid browser-default controls.
 - Every green highlight must use the shared `--accent` variable so themes and accent choices remain coherent.
+- Themes must be complete surface systems. Adding or changing a theme must update the page background, sidebar, content panels, settings cards, controls, ad rail, borders, muted text, active states, hover states, and scrollbars together.
+- OLED Dark should use true-black outer surfaces with slightly lifted dark-gray panels and sidebar surfaces so hierarchy remains visible.
+- Dusk should use coordinated blue-gray surfaces across every client region, not only the main content background.
 - Use clear visual hierarchy: page title, section title, helper text, then the control.
 
 ## Layout
