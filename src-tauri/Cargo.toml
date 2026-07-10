@@ -22,3 +22,4 @@ tokio = { version = "1", features = ["time"] }
 zip = "2"
 mc-launcher-core = "0.1.1"
 keyring = { version = "3.6.3", features = ["windows-native"] }
+base64 = "0.22"

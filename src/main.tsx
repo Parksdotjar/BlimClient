@@ -24,11 +24,14 @@ import {
   FolderOpen,
   House,
   Layers3,
+  ImagePlus,
+  MoreHorizontal,
   PackageOpen,
   Palette,
   Play,
   Puzzle,
   Rocket,
+  Search,
   Settings as SettingsIcon,
   Shield,
   SlidersHorizontal,
@@ -649,6 +652,7 @@ function SettingsPage({
 type InstanceDraft = {
   id: string;
   name: string;
+  icon?: string | null;
   loader: string;
   version: string;
   directory: string;
@@ -912,6 +916,37 @@ function NewInstancePage({
     </div>
   );
 }
+type InstanceContentItem = { id: string; name: string; version: string; fileName: string; size: number; enabled: boolean; icon?: string | null };
+type InstanceTab = "mods" | "resourcepacks" | "shaderpacks" | "settings";
+
+function InstancePage({ instance, busy, onPlay, onChanged }: { instance: InstanceDraft; busy: boolean; onPlay: () => void; onChanged: (instance: InstanceDraft) => void }) {
+  const [tab, setTab] = useState<InstanceTab>("mods");
+  const [items, setItems] = useState<InstanceContentItem[]>([]);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("Name");
+  const [filter, setFilter] = useState("All");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [message, setMessage] = useState("");
+  const [name, setName] = useState(instance.name);
+  const [memory, setMemory] = useState(instance.memory);
+  const [jvmArguments, setJvmArguments] = useState(instance.jvmArguments);
+  const iconInput = useRef<HTMLInputElement>(null);
+  const loadContent = async () => { if (tab === "settings") return; try { setItems(await invoke<InstanceContentItem[]>("list_instance_content", { instanceId: instance.id, category: tab })); } catch (error) { setMessage(String(error)); } };
+  useEffect(() => { void loadContent(); const timer = window.setInterval(() => void loadContent(), 2500); const focus = () => void loadContent(); window.addEventListener("focus", focus); return () => { window.clearInterval(timer); window.removeEventListener("focus", focus); }; }, [tab, instance.id]);
+  useEffect(() => { setName(instance.name); setMemory(instance.memory); setJvmArguments(instance.jvmArguments); }, [instance]);
+  const toggleItem = async (item: InstanceContentItem, enabled: boolean) => { try { await invoke("toggle_instance_content", { instanceId: instance.id, category: tab, fileName: item.fileName, enabled }); await loadContent(); } catch (error) { setMessage(String(error)); } };
+  const chooseIcon = (file?: File) => { if (!file) return; const reader = new FileReader(); reader.onload = () => { void invoke<InstanceDraft>("set_instance_icon", { instanceId: instance.id, icon: String(reader.result) }).then(onChanged).catch(error => setMessage(String(error))); }; reader.readAsDataURL(file); };
+  const saveSettings = async () => { try { const saved = await invoke<InstanceDraft>("update_instance_settings", { instanceId: instance.id, name, memory, jvmArguments }); onChanged(saved); setMessage("Instance settings saved."); } catch (error) { setMessage(String(error)); } };
+  const categoryLabel = tab === "mods" ? "Mods" : tab === "resourcepacks" ? "Resource Packs" : "Shaders";
+  const visibleItems = items.filter(item => item.name.toLowerCase().includes(search.toLowerCase()) && (filter === "All" || (filter === "Enabled" ? item.enabled : !item.enabled))).sort((a, b) => sort === "Size" ? b.size - a.size : a.name.localeCompare(b.name));
+  const tabs: Array<[InstanceTab, typeof Puzzle, string, string]> = [["mods", Puzzle, "Mods", "Manage your mods"], ["resourcepacks", PackageOpen, "Resource Packs", "Manage resource packs"], ["shaderpacks", Cuboid, "Shaders", "Manage shader packs"], ["settings", SettingsIcon, "Settings", "Configure instance settings"]];
+  return <div className="instance-workspace">
+    <section className="instance-hero-panel"><div className="instance-identity"><button className="instance-icon-picker" onClick={() => iconInput.current?.click()}>{instance.icon ? <img src={instance.icon} alt="" /> : <Cuboid size={32} />}<span><ImagePlus size={14} /></span></button><input ref={iconInput} type="file" accept="image/png,image/jpeg" hidden onChange={event => chooseIcon(event.target.files?.[0])} /><div><h1>{instance.name}</h1><p>{instance.version} • {instance.loader}</p><small>{instance.directory}</small></div></div><div className="instance-hero-actions"><button className="instance-play" disabled={busy} onClick={onPlay}><Play size={17} fill="currentColor" />Play</button><div className="instance-more-wrap"><button className="instance-more" onClick={() => setMenuOpen(value => !value)}><MoreHorizontal size={20} /></button>{menuOpen && <div className="instance-folder-menu"><button onClick={() => { setMenuOpen(false); void invoke("open_instance_folder", { instanceId: instance.id }); }}>Show in folder</button><button onClick={() => { setMenuOpen(false); void invoke("open_instance_folder", { instanceId: instance.id, category: "mods" }); }}>Open mods folder</button></div>}</div></div>
+    <div className="instance-tabs">{tabs.map(([id, Icon, title, description]) => <button key={id} className={tab === id ? "selected" : ""} onClick={() => setTab(id)}><span><Icon size={22} /></span><div><b>{title}</b><small>{description}</small></div></button>)}</div></section>
+    {tab === "settings" ? <section className="instance-manager settings-manager"><div className="manager-heading"><div><h2>Instance Settings</h2><p>Change settings used when this instance launches.</p></div><button className="add-content" onClick={saveSettings}>Save Changes</button></div><div className="instance-settings-grid"><label><span>Name</span><input value={name} onChange={event => setName(event.target.value)} /></label><label><span>Memory <b>{memory} MB</b></span><input type="range" min="1024" max="16384" step="512" value={memory} onChange={event => setMemory(Number(event.target.value))} /></label><label className="wide"><span>JVM Arguments</span><textarea value={jvmArguments} onChange={event => setJvmArguments(event.target.value)} placeholder="Optional Java arguments" /></label></div>{message && <p className="instance-message">{message}</p>}</section> : <section className="instance-manager"><div className="manager-heading"><div><h2>Installed {categoryLabel} <span>{items.length}</span></h2><p>Files placed in this instance's {tab} folder appear automatically.</p></div><div className="manager-tools"><Select value={sort} options={["Name", "Size"]} onChange={setSort} /><button className="add-content" title={`Installing ${categoryLabel.toLowerCase()} in-app is coming later`}><CirclePlus size={16} />Add {categoryLabel}</button></div></div><div className="content-list">{visibleItems.length ? visibleItems.map(item => <div className="content-item" key={item.id}><span className="content-icon">{item.icon ? <img src={item.icon} alt="" /> : <PackageOpen size={22} />}</span><div className="content-name"><b>{item.name}</b><small>{item.version || item.fileName}</small></div><span className="content-loader">{instance.loader}</span><span className="content-size">{item.size >= 1048576 ? `${(item.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(item.size / 1024))} KB`}</span><Toggle value={item.enabled} onChange={value => void toggleItem(item, value)} /><button className="content-dots"><MoreHorizontal size={18} /></button></div>) : <div className="content-empty"><PackageOpen size={24} /><b>No {categoryLabel.toLowerCase()} installed</b><span>Open the folder and drag files here to get started.</span><button onClick={() => void invoke("open_instance_folder", { instanceId: instance.id, category: tab })}>Open folder</button></div>}</div><div className="content-search"><Search size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={`Search ${categoryLabel.toLowerCase()}...`} /><Select value={filter} options={["All", "Enabled", "Disabled"]} onChange={setFilter} /></div>{message && <p className="instance-message">{message}</p>}</section>}
+  </div>;
+}
+
 type DownloadViewState = { active: boolean; progress: number; state: string; message: string; instanceId?: string; downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number };
 type CompletedDownload = { id: string; name: string; version: string; loader?: string; completedAt: number };
 
@@ -940,10 +975,11 @@ function DownloadsPage({ download, instances, completed, onClear, onCancel }: { 
 }
 
 function App() {
-  const [page, setPage] = useState<"home" | "settings" | "new-instance" | "downloads">(
+  const [page, setPage] = useState<"home" | "settings" | "new-instance" | "downloads" | "instance">(
     "home",
   );
   const [instances, setInstances] = useState<InstanceDraft[]>([]);
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [download, setDownload] = useState<DownloadViewState>({
     active: false,
     progress: 0,
@@ -1110,6 +1146,7 @@ function App() {
     )
       event.preventDefault();
   };
+  const selectedInstance = instances.find(instance => instance.id === selectedInstanceId);
   return (
     <div
       className="app-shell"
@@ -1158,11 +1195,11 @@ function App() {
           {instances.length ? (
             instances.map((instance) => (
               <button
-                className="sidebar-instance"
+                className={`sidebar-instance ${page === "instance" && selectedInstanceId === instance.id ? "active" : ""}`}
                 key={instance.id}
-                onClick={() => setPage("home")}
+                onClick={() => { setSelectedInstanceId(instance.id); setPage("instance"); }}
               >
-                <span className="instance-dot" />
+                {instance.icon ? <img className="sidebar-instance-icon" src={instance.icon} alt="" /> : <span className="instance-dot" />}
                 <span>
                   <b>{instance.name}</b>
                   <small>{instance.version}</small>
@@ -1229,7 +1266,9 @@ function App() {
         </div>
       </aside>
       <main className="content">
-        {page === "downloads" ? (
+        {page === "instance" && selectedInstance ? (
+          <InstancePage instance={selectedInstance} busy={download.active || gameRunning} onPlay={() => void launch(selectedInstance)} onChanged={(changed) => setInstances(current => current.map(instance => instance.id === changed.id ? changed : instance))} />
+        ) : page === "downloads" ? (
           <DownloadsPage download={download} instances={instances} completed={completedDownloads} onClear={() => setCompletedDownloads([])} onCancel={() => void invoke("cancel_minecraft_launch")} />
         ) : page === "settings" ? (
           <SettingsPage settings={settings} setSettings={setSettings} onSignOut={() => { void invoke("sign_out_minecraft").finally(() => { setProfile(null); setSignInOpen(false); }); }} />
@@ -1289,8 +1328,8 @@ function App() {
                 </div>
                 {instances.length
                   ? instances.map((instance) => (
-                      <div className="instance-card" key={instance.id}>
-                        <span className="instance-dot" />
+                      <div className="instance-card" key={instance.id} onClick={() => { setSelectedInstanceId(instance.id); setPage("instance"); }}>
+                        {instance.icon ? <img className="recent-instance-icon" src={instance.icon} alt="" /> : <span className="instance-dot" />}
                         <div>
                           <b>{instance.name}</b>
                           <small>{instance.version} • {instance.loader}</small>
@@ -1298,7 +1337,7 @@ function App() {
                         <button
                           className="play-instance"
                           disabled={download.active || gameRunning}
-                          onClick={() => void launch(instance)}
+                          onClick={(event) => { event.stopPropagation(); void launch(instance); }}
                         >
                           <Play size={17} fill="currentColor" />
                         </button>

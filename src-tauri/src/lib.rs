@@ -144,12 +144,16 @@ struct JavaInstallation { path: String, major_version: Option<u32>, usable: bool
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct InstanceConfig {
-    id: String, name: String, #[serde(default = "default_loader")] loader: String, version: String, directory: String, java: String, memory: u32,
+    id: String, name: String, #[serde(default)] icon: Option<String>, #[serde(default = "default_loader")] loader: String, version: String, directory: String, java: String, memory: u32,
     jvm_arguments: String, mods: bool, resource_packs: bool, shader_packs: bool, config: bool,
     custom_resolution: bool, visible: bool, shortcut: bool,
 }
 
 fn default_loader() -> String { "Vanilla".to_string() }
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstanceContentItem { id: String, name: String, version: String, file_name: String, size: u64, enabled: bool, icon: Option<String> }
 
 fn bloom_data_dir() -> Result<std::path::PathBuf, String> {
     let appdata = std::env::var("APPDATA").map_err(|_| "APPDATA is unavailable on this computer.".to_string())?;
@@ -210,6 +214,83 @@ fn load_instance(instance_id: &str) -> Result<InstanceConfig, String> {
     let path = bloom_data_dir()?.join("instances").join(format!("{instance_id}.json"));
     let bytes = std::fs::read(path).map_err(|_| "This instance could not be found. Create it again and try once more.".to_string())?;
     serde_json::from_slice(&bytes).map_err(|_| "This instance configuration is invalid.".to_string())
+}
+
+fn write_instance(config: &InstanceConfig) -> Result<(), String> {
+    let path = bloom_data_dir()?.join("instances").join(format!("{}.json", config.id));
+    std::fs::write(path, serde_json::to_vec_pretty(config).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+}
+
+fn content_folder(config: &InstanceConfig, category: &str) -> Result<std::path::PathBuf, String> {
+    let folder = match category { "mods" => "mods", "resourcepacks" => "resourcepacks", "shaderpacks" => "shaderpacks", _ => return Err("Unsupported instance content category.".into()) };
+    let path = std::path::PathBuf::from(&config.directory).join(folder);
+    std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn archive_icon(archive: &mut zip::ZipArchive<std::fs::File>, icon_path: &str) -> Option<String> {
+    use std::io::Read;
+    use base64::Engine;
+    let mut icon = archive.by_name(icon_path).ok()?;
+    if icon.size() > 2_500_000 { return None; }
+    let mut bytes = Vec::new(); icon.read_to_end(&mut bytes).ok()?;
+    let mime = if icon_path.to_ascii_lowercase().ends_with(".jpg") || icon_path.to_ascii_lowercase().ends_with(".jpeg") { "image/jpeg" } else { "image/png" };
+    Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
+#[tauri::command]
+fn list_instance_content(instance_id: String, category: String) -> Result<Vec<InstanceContentItem>, String> {
+    use std::io::Read;
+    let config = load_instance(&instance_id)?;
+    let folder = content_folder(&config, &category)?;
+    let mut items = Vec::new();
+    for entry in std::fs::read_dir(folder).map_err(|error| error.to_string())?.flatten() {
+        let path = entry.path(); if !path.is_file() { continue; }
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        let enabled = !file_name.to_ascii_lowercase().ends_with(".disabled");
+        let visible_name = file_name.strip_suffix(".disabled").unwrap_or(&file_name);
+        let mut name = visible_name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(visible_name).to_string();
+        let mut version = String::new(); let mut icon = None;
+        if let Ok(file) = std::fs::File::open(&path) { if let Ok(mut archive) = zip::ZipArchive::new(file) {
+            if category == "mods" {
+                let metadata = { let mut text = String::new(); archive.by_name("fabric.mod.json").ok().and_then(|mut file| file.read_to_string(&mut text).ok()).and_then(|_| serde_json::from_str::<serde_json::Value>(&text).ok()) };
+                if let Some(metadata) = metadata { name = metadata["name"].as_str().unwrap_or(&name).to_string(); version = metadata["version"].as_str().unwrap_or_default().to_string(); let icon_path = metadata["icon"].as_str().map(str::to_string).or_else(|| metadata["icon"].as_object().and_then(|icons| icons.iter().max_by_key(|(size, _)| size.parse::<u32>().unwrap_or(0)).and_then(|(_, value)| value.as_str()).map(str::to_string))); if let Some(icon_path) = icon_path { icon = archive_icon(&mut archive, &icon_path); } }
+            } else { icon = archive_icon(&mut archive, "pack.png"); }
+        } }
+        items.push(InstanceContentItem { id: file_name.clone(), name, version, file_name, size: entry.metadata().map(|value| value.len()).unwrap_or(0), enabled, icon });
+    }
+    items.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    Ok(items)
+}
+
+#[tauri::command]
+fn toggle_instance_content(instance_id: String, category: String, file_name: String, enabled: bool) -> Result<(), String> {
+    if std::path::Path::new(&file_name).file_name().and_then(|name| name.to_str()) != Some(file_name.as_str()) { return Err("Invalid content filename.".into()); }
+    let folder = content_folder(&load_instance(&instance_id)?, &category)?;
+    let source = folder.join(&file_name); if !source.exists() { return Err("That file no longer exists.".into()); }
+    let target_name = if enabled { file_name.strip_suffix(".disabled").unwrap_or(&file_name).to_string() } else if file_name.ends_with(".disabled") { file_name.clone() } else { format!("{file_name}.disabled") };
+    if target_name != file_name { std::fs::rename(source, folder.join(target_name)).map_err(|error| error.to_string())?; }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_instance_icon(instance_id: String, icon: String) -> Result<InstanceConfig, String> {
+    if !icon.starts_with("data:image/") || icon.len() > 4_000_000 { return Err("Choose a PNG or JPEG image smaller than about 3 MB.".into()); }
+    let mut config = load_instance(&instance_id)?; config.icon = Some(icon); write_instance(&config)?; Ok(config)
+}
+
+#[tauri::command]
+fn update_instance_settings(instance_id: String, name: String, memory: u32, jvm_arguments: String) -> Result<InstanceConfig, String> {
+    if name.trim().is_empty() { return Err("Instance name cannot be empty.".into()); }
+    if !(1024..=16384).contains(&memory) { return Err("Memory must be between 1024 MB and 16384 MB.".into()); }
+    let mut config = load_instance(&instance_id)?; config.name = name.trim().to_string(); config.memory = memory; config.jvm_arguments = jvm_arguments; write_instance(&config)?; Ok(config)
+}
+
+#[tauri::command]
+fn open_instance_folder(instance_id: String, category: Option<String>) -> Result<(), String> {
+    let config = load_instance(&instance_id)?;
+    let target = if let Some(category) = category { content_folder(&config, &category)? } else { std::path::PathBuf::from(config.directory) };
+    std::process::Command::new("explorer.exe").arg(target).spawn().map_err(|error| error.to_string())?; Ok(())
 }
 
 fn install_fabric_api(config: &InstanceConfig) -> Result<(), String> {
@@ -398,7 +479,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(LauncherState::default())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, request_microsoft_device_code, complete_microsoft_login, detect_java_installations, get_minecraft_releases, save_instance, list_instances, launch_minecraft, get_minecraft_launch_status, cancel_minecraft_launch, sign_out_minecraft, get_saved_minecraft_profile])
+        .invoke_handler(tauri::generate_handler![greet, request_microsoft_device_code, complete_microsoft_login, detect_java_installations, get_minecraft_releases, save_instance, list_instances, list_instance_content, toggle_instance_content, set_instance_icon, update_instance_settings, open_instance_folder, launch_minecraft, get_minecraft_launch_status, cancel_minecraft_launch, sign_out_minecraft, get_saved_minecraft_profile])
         .run(tauri::generate_context!())
         .expect("error while running Bloom Client");
 }

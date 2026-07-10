@@ -342,6 +342,7 @@ dependencies = [
 name = "bloomclient"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "keyring",
  "mc-launcher-core",
  "reqwest 0.12.28",

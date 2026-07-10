@@ -2145,3 +2145,56 @@ body,
 .downloads-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; color: var(--muted); font-size: 12px; }
 .downloads-footer button { display: flex; align-items: center; gap: 8px; padding: 10px 15px; border: 1px solid var(--border); border-radius: 8px; background: var(--control); font-size: 12px; font-weight: 700; }
 .downloads-footer button:disabled { opacity: .4; cursor: default; }
+
+/* Instance workspace */
+.sidebar-instance.active { background: color-mix(in srgb, var(--accent) 10%, var(--control)); color: var(--accent); box-shadow: inset 2px 0 var(--accent); }
+.sidebar-instance-icon, .recent-instance-icon { width: 24px; height: 24px; flex: 0 0 auto; object-fit: cover; border-radius: 6px; }
+.recent-instance-icon { width: 30px; height: 30px; }
+.instance-card { cursor: pointer; }
+.instance-workspace { padding: 20px 18px 34px; min-height: 100%; }
+.instance-hero-panel, .instance-manager { border: 1px solid var(--border); border-radius: 13px; background: var(--panel); }
+.instance-hero-panel { padding: 22px 22px 10px; }
+.instance-identity { display: flex; align-items: center; gap: 18px; min-width: 0; }
+.instance-identity > div:last-child { min-width: 0; }
+.instance-identity h1 { margin: 0; font-size: 28px; letter-spacing: -.04em; }
+.instance-identity p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.instance-identity small { display: block; margin-top: 7px; max-width: 620px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+.instance-icon-picker { position: relative; width: 68px; height: 68px; flex: 0 0 auto; display: grid; place-items: center; overflow: visible; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--accent) 14%, var(--control)); color: var(--accent); }
+.instance-icon-picker img { width: 100%; height: 100%; object-fit: cover; border-radius: 11px; }
+.instance-icon-picker span { position: absolute; right: -5px; bottom: -5px; width: 27px; height: 27px; display: grid; place-items: center; border: 2px solid var(--panel); border-radius: 8px; background: var(--control); color: var(--text); }
+.instance-hero-panel { position: relative; }
+.instance-hero-actions { position: absolute; top: 28px; right: 24px; display: flex; gap: 10px; }
+.instance-play { min-width: 122px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 20px; border: 0; border-radius: 9px; background: var(--accent); color: #101310; font-weight: 800; box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 28%, transparent); }
+.instance-play:disabled { opacity: .5; cursor: wait; }
+.instance-more-wrap { position: relative; }
+.instance-more { width: 43px; height: 43px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 9px; background: var(--control); }
+.instance-folder-menu { position: absolute; z-index: 20; top: 49px; right: 0; width: 160px; padding: 6px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-strong); box-shadow: 0 14px 34px #0009; }
+.instance-folder-menu button { width: 100%; padding: 9px 10px; border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: 12px; }
+.instance-folder-menu button:hover { background: var(--control); color: var(--accent); }
+.instance-tabs { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 26px; border-top: 1px solid var(--border); }
+.instance-tabs > button { min-height: 78px; display: flex; align-items: center; gap: 13px; padding: 13px 16px; border: 1px solid transparent; border-right-color: var(--border); background: transparent; text-align: left; }
+.instance-tabs > button:last-child { border-right-color: transparent; }
+.instance-tabs > button.selected { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.instance-tabs > button > span { width: 41px; height: 41px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 8px; color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, var(--control)); }
+.instance-tabs b, .instance-tabs small { display: block; }.instance-tabs b { font-size: 13px; }.instance-tabs small { margin-top: 5px; color: var(--muted); font-size: 11px; }
+.instance-manager { margin-top: 16px; padding: 22px; }
+.manager-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
+.manager-heading h2 { margin: 0; font-size: 17px; }.manager-heading h2 span { margin-left: 6px; padding: 3px 7px; border-radius: 99px; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); font-size: 11px; }
+.manager-heading p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.manager-tools { display: flex; align-items: center; gap: 10px; }.manager-tools .select-wrap { width: 145px; }
+.add-content { display: flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 15px; border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 12%, var(--control)); color: var(--accent); font-size: 12px; font-weight: 800; }
+.content-list { max-height: 475px; overflow-y: auto; padding-right: 5px; }
+.content-item { min-height: 70px; display: flex; align-items: center; gap: 14px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--control); }
+.content-item + .content-item { margin-top: 7px; }
+.content-icon { width: 43px; height: 43px; flex: 0 0 auto; display: grid; place-items: center; overflow: hidden; border-radius: 8px; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--panel)); }
+.content-icon img { width: 100%; height: 100%; object-fit: cover; }
+.content-name { flex: 1; min-width: 0; }.content-name b, .content-name small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.content-name b { font-size: 13px; }.content-name small { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.content-loader, .content-size { width: 95px; color: var(--muted); font-size: 12px; }.content-size { width: 75px; }
+.content-dots { width: 32px; height: 32px; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); }
+.content-empty { min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); text-align: center; }
+.content-empty b { margin-top: 10px; color: var(--text); font-size: 14px; }.content-empty span { margin-top: 5px; font-size: 12px; }.content-empty button { margin-top: 14px; padding: 9px 13px; border: 1px solid var(--border); border-radius: 7px; background: var(--control); color: var(--accent); font-size: 12px; }
+.content-search { display: flex; align-items: center; gap: 10px; margin-top: 15px; padding: 7px 10px 7px 14px; border: 1px solid var(--border); border-radius: 999px; background: var(--control); color: var(--muted); }
+.content-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); }.content-search .select-wrap { width: 130px; }
+.instance-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }.instance-settings-grid label { display: grid; gap: 8px; color: var(--text); font-size: 12px; font-weight: 700; }.instance-settings-grid label > span { display: flex; justify-content: space-between; }.instance-settings-grid input:not([type="range"]), .instance-settings-grid textarea { border: 1px solid var(--border); border-radius: 8px; background: var(--control); color: var(--text); padding: 11px 12px; outline: 0; }.instance-settings-grid textarea { min-height: 105px; resize: vertical; }.instance-settings-grid .wide { grid-column: 1 / -1; }
+.instance-message { margin: 13px 0 0; color: var(--accent); font-size: 12px; }
+@media (max-width: 1250px) { .instance-tabs { grid-template-columns: 1fr 1fr; }.instance-hero-actions { position: static; margin-top: 18px; }.content-loader { display: none; } }
