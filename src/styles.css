@@ -6,3 +6,10 @@ nav button svg,.sidebar-link svg,.add-instance svg{flex:0 0 18px;color:#cbd2d3}
 nav button.active svg{color:#abec79}
 .quick-icon{font-size:0}
 .topbar{justify-content:flex-start}
+
+/* Inline control alignment */
+.new-instance{display:flex;align-items:center;justify-content:center;gap:8px}
+.new-instance span{margin-left:0}
+.section-heading button,.view-all{display:inline-flex;align-items:center;justify-content:center;gap:3px;line-height:1}
+.section-heading button svg,.view-all svg{display:block;flex:0 0 auto}
+.view-all{gap:6px}
