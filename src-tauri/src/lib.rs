@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Emitter;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct MinecraftSession { username: String, uuid: String, access_token: String }
+struct MinecraftSession { username: String, uuid: String, access_token: String, refresh_token: String, client_id: String }
 
 #[derive(Default)]
 struct LauncherState { session: Mutex<Option<MinecraftSession>>, launch_active: Arc<Mutex<bool>> }
@@ -31,10 +31,10 @@ fn saved_session() -> Option<MinecraftSession> {
     serde_json::from_str(&entry.get_password().ok()?).ok()
 }
 
-fn save_session(session: &MinecraftSession) {
-    if let (Ok(entry), Ok(value)) = (keyring::Entry::new("Bloom Client", "minecraft-session"), serde_json::to_string(session)) {
-        let _ = entry.set_password(&value);
-    }
+fn save_session(session: &MinecraftSession) -> Result<(), String> {
+    let entry = keyring::Entry::new("Bloom Client", "minecraft-session").map_err(|error| format!("Windows could not prepare secure account storage: {error}"))?;
+    let value = serde_json::to_string(session).map_err(|error| error.to_string())?;
+    entry.set_password(&value).map_err(|error| format!("Windows could not save your sign-in securely: {error}"))
 }
 
 #[tauri::command]
@@ -68,14 +68,16 @@ async fn complete_microsoft_login(state: tauri::State<'_, LauncherState>, client
     let client = reqwest::Client::new();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(expires_in);
     let mut wait_seconds = interval.max(5);
-    let access_token = loop {
+    let tokens = loop {
         if std::time::Instant::now() >= deadline { return Err("The Microsoft sign-in code expired.".into()); }
         tokio::time::sleep(std::time::Duration::from_secs(wait_seconds)).await;
         let response = client.post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token").form(&[("client_id", client_id.clone()), ("grant_type", "urn:ietf:params:oauth:grant-type:device_code".into()), ("device_code", device_code.clone())]).send().await.map_err(|error| error.to_string())?;
         let body: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
-        if let Some(token) = body.get("access_token").and_then(|v| v.as_str()) { break token.to_string(); }
+        if body.get("access_token").and_then(|v| v.as_str()).is_some() { break body; }
         match body.get("error").and_then(|v| v.as_str()) { Some("authorization_pending") => continue, Some("slow_down") => { wait_seconds += 5; continue; }, _ => return Err(body.get("error_description").and_then(|v| v.as_str()).unwrap_or("Microsoft sign-in failed.").to_string()) }
     };
+    let access_token = tokens["access_token"].as_str().ok_or("Microsoft did not return an access token.")?.to_string();
+    let refresh_token = tokens["refresh_token"].as_str().ok_or("Microsoft did not return a refresh token. Reconnect your account once more.")?.to_string();
     let xbl_response = client.post("https://user.auth.xboxlive.com/user/authenticate").json(&serde_json::json!({"Properties":{"AuthMethod":"RPS","SiteName":"user.auth.xboxlive.com","RpsTicket":format!("d={access_token}")},"RelyingParty":"http://auth.xboxlive.com","TokenType":"JWT"})).send().await.map_err(|error| error.to_string())?;
     let xbl = read_auth_response(xbl_response, "Xbox Live").await?;
     let xsts_response = client.post("https://xsts.auth.xboxlive.com/xsts/authorize").json(&serde_json::json!({"Properties":{"SandboxId":"RETAIL","UserTokens":[xbl["Token"]]},"RelyingParty":"rp://api.minecraftservices.com/","TokenType":"JWT"})).send().await.map_err(|error| error.to_string())?;
@@ -90,10 +92,26 @@ async fn complete_microsoft_login(state: tauri::State<'_, LauncherState>, client
     if profile.get("id").and_then(|v| v.as_str()).is_none() || profile.get("name").and_then(|v| v.as_str()).is_none() { return Err("No Minecraft profile was found on this account.".into()); }
     let username = profile["name"].as_str().unwrap_or_default().to_string();
     let uuid = profile["id"].as_str().unwrap_or_default().to_string();
-    let session = MinecraftSession { username, uuid, access_token: minecraft_token.to_string() };
-    save_session(&session);
+    let session = MinecraftSession { username, uuid, access_token: minecraft_token.to_string(), refresh_token, client_id };
+    save_session(&session)?;
     *state.session.lock().map_err(|_| "Unable to save the Minecraft sign-in session.")? = Some(session);
     Ok(profile)
+}
+
+async fn refresh_minecraft_session(previous: MinecraftSession) -> Result<MinecraftSession, String> {
+    let client = reqwest::Client::new();
+    let response = client.post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token").form(&[("client_id", previous.client_id.clone()), ("grant_type", "refresh_token".into()), ("refresh_token", previous.refresh_token.clone())]).send().await.map_err(|error| error.to_string())?;
+    let tokens = read_auth_response(response, "Microsoft sign-in").await?;
+    let access_token = tokens["access_token"].as_str().ok_or("Microsoft did not return a refreshed access token.")?;
+    let refresh_token = tokens["refresh_token"].as_str().unwrap_or(&previous.refresh_token).to_string();
+    let xbl = read_auth_response(client.post("https://user.auth.xboxlive.com/user/authenticate").json(&serde_json::json!({"Properties":{"AuthMethod":"RPS","SiteName":"user.auth.xboxlive.com","RpsTicket":format!("d={access_token}")},"RelyingParty":"http://auth.xboxlive.com","TokenType":"JWT"})).send().await.map_err(|error| error.to_string())?, "Xbox Live").await?;
+    let xsts = read_auth_response(client.post("https://xsts.auth.xboxlive.com/xsts/authorize").json(&serde_json::json!({"Properties":{"SandboxId":"RETAIL","UserTokens":[xbl["Token"]]},"RelyingParty":"rp://api.minecraftservices.com/","TokenType":"JWT"})).send().await.map_err(|error| error.to_string())?, "Xbox security").await?;
+    let identity = xsts["DisplayClaims"]["xui"][0]["uhs"].as_str().ok_or("Xbox authentication did not return a user identity.")?;
+    let xsts_token = xsts["Token"].as_str().ok_or("Xbox authentication did not return an XSTS token.")?;
+    let minecraft = read_auth_response(client.post("https://api.minecraftservices.com/authentication/login_with_xbox").json(&serde_json::json!({"identityToken":format!("XBL3.0 x={identity};{xsts_token}")})).send().await.map_err(|error| error.to_string())?, "Minecraft services").await?;
+    let minecraft_token = minecraft["access_token"].as_str().ok_or("Minecraft services did not return an access token.")?.to_string();
+    let profile = read_auth_response(client.get("https://api.minecraftservices.com/minecraft/profile").bearer_auth(&minecraft_token).send().await.map_err(|error| error.to_string())?, "Minecraft profile").await?;
+    Ok(MinecraftSession { username: profile["name"].as_str().ok_or("No Minecraft profile was found on this account.")?.to_string(), uuid: profile["id"].as_str().ok_or("No Minecraft profile was found on this account.")?.to_string(), access_token: minecraft_token, refresh_token, client_id: previous.client_id })
 }
 
 #[derive(serde::Serialize)]
@@ -182,14 +200,20 @@ fn selected_java(config: &InstanceConfig, required: u32) -> Result<std::path::Pa
 }
 
 #[tauri::command]
-fn launch_minecraft(app: tauri::AppHandle, state: tauri::State<'_, LauncherState>, instance_id: String) -> Result<(), String> {
+async fn launch_minecraft(app: tauri::AppHandle, state: tauri::State<'_, LauncherState>, instance_id: String) -> Result<(), String> {
     {
         let mut active = state.launch_active.lock().map_err(|_| "The launcher is busy. Try again.")?;
         if *active { return Err("Something is already downloading or running. Please wait.".into()); }
         *active = true;
     }
-    let session = state.session.lock().map_err(|_| "Unable to read the Minecraft sign-in session.")?.clone().or_else(saved_session)
+    let saved = state.session.lock().map_err(|_| "Unable to read the Minecraft sign-in session.")?.clone().or_else(saved_session)
         .ok_or_else(|| { if let Ok(mut active) = state.launch_active.lock() { *active = false; } "Sign in with Microsoft before launching Minecraft.".to_string() })?;
+    let session = match refresh_minecraft_session(saved).await {
+        Ok(session) => session,
+        Err(error) => { if let Ok(mut active) = state.launch_active.lock() { *active = false; } return Err(format!("Your Microsoft session could not be refreshed. Reconnect only if this continues: {error}")); }
+    };
+    save_session(&session)?;
+    *state.session.lock().map_err(|_| "Unable to save the refreshed Minecraft session.")? = Some(session.clone());
     let active = Arc::new(state.launch_active.clone());
     std::thread::spawn(move || {
         let config = match load_instance(&instance_id) { Ok(config) => config, Err(error) => { emit_launch(&app, &instance_id, "error", 0, error); if let Ok(mut value) = active.lock() { *value = false; } return; } };
