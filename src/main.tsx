@@ -978,6 +978,14 @@ function App() {
     });
     return () => unlisten?.();
   }, []);
+  useEffect(() => {
+    const poll = window.setInterval(() => {
+      void invoke<{ state: string; progress: number; message: string }>("get_minecraft_launch_status").then((status) => {
+        if (status.state === "installing" || status.state === "launching") setDownload({ active: true, progress: status.progress, state: status.state, message: status.message });
+      }).catch(() => {});
+    }, 250);
+    return () => window.clearInterval(poll);
+  }, []);
   const launch = async (instance: InstanceDraft) => {
     if (download.active || gameRunning) {
       setToast("Something is already downloading or running. Please wait.");

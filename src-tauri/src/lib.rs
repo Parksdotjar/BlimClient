@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Emitter;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -11,9 +11,20 @@ struct LauncherState { session: Mutex<Option<MinecraftSession>>, launch_active: 
 #[serde(rename_all = "camelCase")]
 struct LaunchProgress { instance_id: String, state: String, progress: u8, message: String }
 
-fn emit_launch(app: &tauri::AppHandle, instance_id: &str, state: &str, progress: u8, message: impl Into<String>) {
-    let _ = app.emit("minecraft-launch-progress", LaunchProgress { instance_id: instance_id.to_string(), state: state.to_string(), progress, message: message.into() });
+static CURRENT_LAUNCH: OnceLock<Mutex<LaunchProgress>> = OnceLock::new();
+
+fn current_launch() -> &'static Mutex<LaunchProgress> {
+    CURRENT_LAUNCH.get_or_init(|| Mutex::new(LaunchProgress { instance_id: String::new(), state: "idle".into(), progress: 0, message: String::new() }))
 }
+
+fn emit_launch(app: &tauri::AppHandle, instance_id: &str, state: &str, progress: u8, message: impl Into<String>) {
+    let payload = LaunchProgress { instance_id: instance_id.to_string(), state: state.to_string(), progress, message: message.into() };
+    if let Ok(mut current) = current_launch().lock() { *current = payload.clone(); }
+    let _ = app.emit("minecraft-launch-progress", payload);
+}
+
+#[tauri::command]
+fn get_minecraft_launch_status() -> LaunchProgress { current_launch().lock().map(|status| status.clone()).unwrap_or(LaunchProgress { instance_id: String::new(), state: "idle".into(), progress: 0, message: String::new() }) }
 
 fn saved_session() -> Option<MinecraftSession> {
     let entry = keyring::Entry::new("Bloom Client", "minecraft-session").ok()?;
@@ -226,7 +237,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(LauncherState::default())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, request_microsoft_device_code, complete_microsoft_login, detect_java_installations, get_minecraft_releases, save_instance, list_instances, launch_minecraft])
+        .invoke_handler(tauri::generate_handler![greet, request_microsoft_device_code, complete_microsoft_login, detect_java_installations, get_minecraft_releases, save_instance, list_instances, launch_minecraft, get_minecraft_launch_status])
         .run(tauri::generate_context!())
         .expect("error while running Bloom Client");
 }
