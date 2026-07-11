@@ -1203,7 +1203,7 @@ function App() {
           setGameRunning(false);
           setToastKind("error");
           setToast(next.message);
-          setLogs(current => [...current, { id: `${Date.now()}-launch-error`, instanceId: next.instanceId, instanceName: instances.find(item => item.id === next.instanceId)?.name || next.instanceId || "Launcher", stream: "launcher", level: "error", message: next.message, timestamp: Date.now() }].slice(-600));
+          setLogs(current => [...current, { id: `${Date.now()}-launch-error`, instanceId: next.instanceId || "launcher", instanceName: instances.find(item => item.id === next.instanceId)?.name || next.instanceId || "Launcher", stream: "launcher", level: "error" as const, message: next.message, timestamp: Date.now() }].slice(-600));
           window.setTimeout(() => setToast(""), 5000);
         }
         if (next.state === "running") {
@@ -1299,7 +1299,7 @@ function App() {
       instanceId: instance.id,
       taskKind: "game",
     });
-    setLogs(current => [...current, { id: `${Date.now()}-launch`, instanceId: instance.id, instanceName: instance.name, stream: "launcher", level: "info", message: `Starting ${instance.name} (${instance.version} • ${instance.loader})`, timestamp: Date.now() }].slice(-600));
+    setLogs(current => [...current, { id: `${Date.now()}-launch`, instanceId: instance.id, instanceName: instance.name, stream: "launcher", level: "info" as const, message: `Starting ${instance.name} (${instance.version} • ${instance.loader})`, timestamp: Date.now() }].slice(-600));
     try {
       await invoke("launch_minecraft", { instanceId: instance.id });
     } catch (error) {
@@ -1309,7 +1309,7 @@ function App() {
         setSignInOpen(true);
         setToast("Your saved profile needs a quick Microsoft reconnect before launching.");
       } else setToast(message);
-      setLogs(current => [...current, { id: `${Date.now()}-invoke-error`, instanceId: instance.id, instanceName: instance.name, stream: "launcher", level: "error", message, timestamp: Date.now() }].slice(-600));
+      setLogs(current => [...current, { id: `${Date.now()}-invoke-error`, instanceId: instance.id, instanceName: instance.name, stream: "launcher", level: "error" as const, message, timestamp: Date.now() }].slice(-600));
       setDownload({ active: false, progress: 0, state: "idle", message: "" });
       window.setTimeout(() => setToast(""), 5000);
     }
