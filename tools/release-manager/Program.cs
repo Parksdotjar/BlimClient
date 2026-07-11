@@ -211,7 +211,7 @@ internal sealed class ReleaseManagerForm : Form
             Step("GitHub", "Waiting for the signed Windows build to start");
             var runId = await FindReleaseRun(tag);
             if (runId == 0) throw new InvalidOperationException("The GitHub release workflow did not start within two minutes.");
-            await MustRun("gh", $"run watch {runId} --exit-status");
+            await WaitForReleaseRun(runId);
 
             Step("Release", "Applying release notes");
             var notesPath = Path.Combine(Path.GetTempPath(), $"bloom-release-{Guid.NewGuid():N}.md");
@@ -263,6 +263,42 @@ internal sealed class ReleaseManagerForm : Form
             await Task.Delay(5000);
         }
         return 0;
+    }
+
+    private async Task WaitForReleaseRun(long runId)
+    {
+        var reported = new Dictionary<string, string>();
+        for (var attempt = 0; attempt < 675; attempt++)
+        {
+            var json = await CaptureOutput("gh", $"run view {runId} --json status,conclusion,jobs,url");
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            foreach (var job in root.GetProperty("jobs").EnumerateArray())
+            {
+                foreach (var step in job.GetProperty("steps").EnumerateArray())
+                {
+                    var name = step.GetProperty("name").GetString() ?? "GitHub step";
+                    var statusValue = step.GetProperty("status").GetString() ?? "pending";
+                    var conclusion = step.GetProperty("conclusion").GetString() ?? "";
+                    var state = statusValue == "completed" && !string.IsNullOrWhiteSpace(conclusion) ? conclusion : statusValue;
+                    if (reported.TryGetValue(name, out var previous) && previous == state) continue;
+                    reported[name] = state;
+                    var color = state == "success" ? Accent : state == "failure" ? Color.FromArgb(241, 103, 103) : Color.FromArgb(183, 197, 192);
+                    Log($"[GitHub] {name}: {state}\n", color);
+                }
+            }
+
+            var runStatus = root.GetProperty("status").GetString();
+            if (runStatus == "completed")
+            {
+                var runConclusion = root.GetProperty("conclusion").GetString();
+                if (runConclusion != "success") throw new InvalidOperationException($"The GitHub build finished with status: {runConclusion ?? "unknown"}.");
+                Log("[GitHub] Signed installer build completed successfully.\n", Accent);
+                return;
+            }
+            await Task.Delay(4000);
+        }
+        throw new TimeoutException("The GitHub build did not finish within 45 minutes.");
     }
 
     private async Task MustRun(string file, string arguments)
