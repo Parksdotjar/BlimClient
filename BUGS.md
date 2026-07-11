@@ -17,6 +17,7 @@ This file is the durable, context-independent record of bugs found in Bloom Clie
 | BLIM-003 | Open | Packaging | Tauri packaging needs the supplied icon assets enabled |
 | BLIM-004 | Fixed | Launcher | Download completed before Minecraft was actually ready |
 | BLIM-005 | Fixed | Fabric | Fabric profile installed without its Maven libraries |
+| BLOOM-006 | Fixed | Packaging | Production client opened with a terminal window |
 
 ---
 
@@ -60,6 +61,14 @@ This file is the durable, context-independent record of bugs found in Bloom Clie
 - **Root cause:** Fabric metadata exposes loader libraries through Maven coordinates and repository URLs without Mojang-style `downloads` objects. The dependency planner ignored those legacy Maven entries, leaving the Fabric library cache empty.
 - **Fix:** Bloom now resolves those Maven coordinates, streams every Fabric library into the shared cache, and keeps failed tasks visible on Downloads with their error message.
 - **Verification:** The generated Fabric Maven URL returns HTTP 200; `cargo check` and `npm run build` pass.
+
+## BLOOM-006 — Production client opened with a terminal window
+
+- **Status:** Fixed
+- **Symptom:** Opening the installed Bloom Client also opened a blank terminal. Closing that terminal closed the client.
+- **Root cause:** The Rust executable used Windows' console subsystem in release builds, making the terminal the owner of the application process.
+- **Fix:** Production builds now use the Windows GUI subsystem. Debug builds keep their console output for development diagnostics.
+- **Verification:** Build Bloom in release mode and confirm the PE subsystem is `Windows GUI`; launching the installed client must not create a terminal window.
 
 ## How to add a bug
 
