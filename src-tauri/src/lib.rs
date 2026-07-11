@@ -148,6 +148,25 @@ struct LaunchProgress {
     bytes_per_second: u64,
 }
 
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GameLogLine {
+    instance_id: String,
+    stream: String,
+    line: String,
+}
+
+fn emit_game_log(app: &tauri::AppHandle, instance_id: &str, stream: &str, line: String) {
+    let _ = app.emit(
+        "minecraft-log-line",
+        GameLogLine {
+            instance_id: instance_id.to_string(),
+            stream: stream.to_string(),
+            line,
+        },
+    );
+}
+
 static CURRENT_LAUNCH: OnceLock<Mutex<LaunchProgress>> = OnceLock::new();
 
 fn current_launch() -> &'static Mutex<LaunchProgress> {
@@ -1873,7 +1892,7 @@ async fn launch_minecraft(
                 96,
                 "Starting Minecraft process",
             );
-            let (log_sender, log_receiver) = std::sync::mpsc::channel::<String>();
+            let (log_sender, log_receiver) = std::sync::mpsc::channel::<(String, String)>();
             if let Some(stdout) = child.stdout.take() {
                 let sender = log_sender.clone();
                 std::thread::spawn(move || {
@@ -1882,7 +1901,7 @@ async fn launch_minecraft(
                         .lines()
                         .map_while(Result::ok)
                     {
-                        let _ = sender.send(line);
+                        let _ = sender.send(("stdout".into(), line));
                     }
                 });
             }
@@ -1894,7 +1913,7 @@ async fn launch_minecraft(
                         .lines()
                         .map_while(Result::ok)
                     {
-                        let _ = sender.send(line);
+                        let _ = sender.send(("stderr".into(), line));
                     }
                 });
             }
@@ -1905,7 +1924,8 @@ async fn launch_minecraft(
                     let _ = child.kill();
                     return Err("Minecraft launch was cancelled.".into());
                 }
-                while let Ok(line) = log_receiver.try_recv() {
+                while let Ok((stream, line)) = log_receiver.try_recv() {
+                    emit_game_log(&app, &instance_id, &stream, line.clone());
                     if line.contains("Loading ") && line.contains(" mods") {
                         emit_launch(&app, &instance_id, "launching", 97, "Loading Fabric mods");
                     } else if line.contains("Backend library") || line.contains("LWJGL Version") {

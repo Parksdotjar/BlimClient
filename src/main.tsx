@@ -1036,6 +1036,37 @@ function InstancePage({ instance, busy, onPlay, onChanged, onInstallMod }: { ins
 }
 
 type DownloadViewState = { active: boolean; progress: number; state: string; message: string; instanceId?: string; downloadedBytes?: number; totalBytes?: number; bytesPerSecond?: number; taskName?: string; taskVersion?: string; taskKind?: "mod" | "game" };
+type LogEntry = { id: string; instanceId: string; instanceName: string; stream: string; level: "info" | "warn" | "error"; message: string; timestamp: number };
+
+function LogsPage({ entries, running, onClear }: { entries: LogEntry[]; running: boolean; onClear: () => void }) {
+  const [search, setSearch] = useState("");
+  const [level, setLevel] = useState("All levels");
+  const consoleEnd = useRef<HTMLDivElement>(null);
+  const filtered = entries.filter(entry => (level === "All levels" || entry.level === level.toLowerCase()) && `${entry.instanceName} ${entry.message}`.toLowerCase().includes(search.toLowerCase()));
+  const errors = entries.filter(entry => entry.level === "error").length;
+  const warnings = entries.filter(entry => entry.level === "warn").length;
+  const first = entries[0]?.timestamp;
+  const last = entries.at(-1)?.timestamp;
+  useEffect(() => { consoleEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [entries.length]);
+  const copyLogs = () => void navigator.clipboard.writeText(filtered.map(entry => `[${new Date(entry.timestamp).toLocaleTimeString()}] [${entry.level.toUpperCase()}] ${entry.message}`).join("\n"));
+  return <div className="logs-page">
+    <header className="logs-heading"><div><h1>Live Logs</h1><p>Watch Minecraft output and diagnose launch problems in real time.</p></div><span className={`logs-live ${running ? "active" : ""}`}><i />{running ? "Live session" : "Console idle"}</span></header>
+    <section className="log-stats">
+      <div><small>Session output</small><b>{entries.length.toLocaleString()} lines</b></div>
+      <div><small>Warnings</small><b>{warnings}</b></div>
+      <div><small>Errors</small><b>{errors}</b></div>
+      <div><small>Session time</small><b>{first && last ? `${Math.max(0, Math.round((last - first) / 1000))}s` : "—"}</b></div>
+    </section>
+    <section className="console-shell">
+      <div className="console-toolbar"><div className="console-title"><TerminalSquare size={16} /><span>Minecraft Console</span><em>{filtered.length} visible</em></div><div className="console-actions"><button onClick={copyLogs}><Clipboard size={15} />Copy</button><button onClick={onClear}><Trash2 size={15} />Clear</button></div></div>
+      <div className="console-output">
+        {filtered.length ? filtered.map(entry => <div className={`console-line ${entry.level}`} key={entry.id}><time>{new Date(entry.timestamp).toLocaleTimeString([], { hour12: false })}</time><span className="console-level">{entry.level}</span><span className="console-instance">{entry.instanceName}</span><code>{entry.message}</code></div>) : <div className="console-empty"><TerminalSquare size={25} /><b>No log output yet</b><span>Launch an instance and its live console output will appear here.</span></div>}
+        <div ref={consoleEnd} />
+      </div>
+      <div className="console-filter"><Search size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search console output…" /><Select value={level} options={["All levels", "Info", "Warn", "Error"]} onChange={setLevel} /></div>
+    </section>
+  </div>;
+}
 type CompletedDownload = { id: string; name: string; version: string; loader?: string; targetName?: string; kind?: "mod" | "game"; completedAt: number };
 
 const formatBytes = (bytes = 0) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
@@ -1080,7 +1111,7 @@ function DownloadsPage({ download, instances, completed, onClear, onCancel }: { 
 }
 
 function App() {
-  const [page, setPage] = useState<"home" | "settings" | "new-instance" | "downloads" | "instance" | "instances">(
+  const [page, setPage] = useState<"home" | "settings" | "new-instance" | "downloads" | "logs" | "instance" | "instances">(
     "home",
   );
   const [instances, setInstances] = useState<InstanceDraft[]>([]);
@@ -1097,6 +1128,7 @@ function App() {
   const [gameRunning, setGameRunning] = useState(false);
   const [toast, setToast] = useState("");
   const [toastKind, setToastKind] = useState<"notification" | "error">("notification");
+  const [logs, setLogs] = useState<LogEntry[]>(() => { try { return JSON.parse(localStorage.getItem("bloom-live-logs") || "[]").slice(-600); } catch { return []; } });
   const [signInOpen, setSignInOpen] = useState(false);
   const [profile, setProfile] = useState<MinecraftProfile | null>(() => {
     try {
@@ -1171,6 +1203,7 @@ function App() {
           setGameRunning(false);
           setToastKind("error");
           setToast(next.message);
+          setLogs(current => [...current, { id: `${Date.now()}-launch-error`, instanceId: next.instanceId, instanceName: instances.find(item => item.id === next.instanceId)?.name || next.instanceId || "Launcher", stream: "launcher", level: "error", message: next.message, timestamp: Date.now() }].slice(-600));
           window.setTimeout(() => setToast(""), 5000);
         }
         if (next.state === "running") {
@@ -1199,6 +1232,16 @@ function App() {
     return () => unlisten?.();
   }, []);
   useEffect(() => { localStorage.setItem("bloom-completed-downloads", JSON.stringify(completedDownloads.slice(0, 5))); }, [completedDownloads]);
+  useEffect(() => { localStorage.setItem("bloom-live-logs", JSON.stringify(logs.slice(-600))); }, [logs]);
+  useEffect(() => {
+    let unlisten: undefined | (() => void);
+    void listen<{ instanceId: string; stream: string; line: string }>("minecraft-log-line", event => {
+      const line = event.payload.line;
+      const level: LogEntry["level"] = event.payload.stream === "stderr" || /\b(error|exception|fatal|crash)\b/i.test(line) ? "error" : /\b(warn|warning)\b/i.test(line) ? "warn" : "info";
+      setLogs(current => [...current, { id: `${Date.now()}-${Math.random()}`, instanceId: event.payload.instanceId, instanceName: instances.find(item => item.id === event.payload.instanceId)?.name || event.payload.instanceId, stream: event.payload.stream, level, message: line, timestamp: Date.now() }].slice(-600));
+    }).then(value => { unlisten = value; });
+    return () => unlisten?.();
+  }, [instances]);
   useEffect(() => {
     if ((download.state !== "running" && download.state !== "complete") || !download.instanceId) return;
     const completionKey = `${download.state}:${download.instanceId}`;
@@ -1256,6 +1299,7 @@ function App() {
       instanceId: instance.id,
       taskKind: "game",
     });
+    setLogs(current => [...current, { id: `${Date.now()}-launch`, instanceId: instance.id, instanceName: instance.name, stream: "launcher", level: "info", message: `Starting ${instance.name} (${instance.version} • ${instance.loader})`, timestamp: Date.now() }].slice(-600));
     try {
       await invoke("launch_minecraft", { instanceId: instance.id });
     } catch (error) {
@@ -1265,6 +1309,7 @@ function App() {
         setSignInOpen(true);
         setToast("Your saved profile needs a quick Microsoft reconnect before launching.");
       } else setToast(message);
+      setLogs(current => [...current, { id: `${Date.now()}-invoke-error`, instanceId: instance.id, instanceName: instance.name, stream: "launcher", level: "error", message, timestamp: Date.now() }].slice(-600));
       setDownload({ active: false, progress: 0, state: "idle", message: "" });
       window.setTimeout(() => setToast(""), 5000);
     }
@@ -1424,7 +1469,7 @@ function App() {
           <Download size={17} />
           Downloads {download.active && <span className={`download-ring ${(download.state === "running" || download.state === "complete") && ringProgress >= 99 ? "complete" : ""}`} style={{ "--download-progress": `${ringProgress}%` } as CSSProperties}>{(download.state === "running" || download.state === "complete") && ringProgress >= 99 && <Check size={12} />}</span>}
         </button>
-        <button className="sidebar-link">
+        <button className={`sidebar-link ${page === "logs" ? "active" : ""}`} onClick={() => setPage("logs")}>
           <TerminalSquare size={17} />
           Logs
         </button>
@@ -1470,6 +1515,8 @@ function App() {
       <main className="content">
         {page === "instance" && selectedInstance ? (
           <InstancePage instance={selectedInstance} busy={download.active || gameRunning} onPlay={() => void launch(selectedInstance)} onInstallMod={(mod) => void installMod(selectedInstance, mod)} onChanged={(changed) => setInstances(current => current.map(instance => instance.id === changed.id ? changed : instance))} />
+        ) : page === "logs" ? (
+          <LogsPage entries={logs} running={gameRunning || download.state === "launching"} onClear={() => setLogs([])} />
         ) : page === "instances" ? (
           <InstancesPage instances={instances} busy={download.active || gameRunning} onCreate={() => setPage("new-instance")} onPlay={(instance) => void launch(instance)} onOpen={(instance) => { setSelectedInstanceId(instance.id); setPage("instance"); }} />
         ) : page === "downloads" ? (
