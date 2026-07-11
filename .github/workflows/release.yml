@@ -1,0 +1,51 @@
+name: Release Bloom Client
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify release tag
+        shell: pwsh
+        run: |
+          $expected = (Get-Content VERSION -Raw).Trim()
+          if ($expected -ne "${{ github.ref_name }}") {
+            throw "VERSION says $expected, but this release tag is ${{ github.ref_name }}. They must match exactly."
+          }
+
+      - run: npm ci
+      - run: npm run version:sync
+
+      - name: Build signed installer and draft release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Bloom Client v__VERSION__
+          releaseBody: |
+            A new Bloom Client update is ready.
+
+            Publish this draft after adding the user-facing release notes. Once published, installed clients will discover it automatically.
+          releaseDraft: true
+          prerelease: false
+          updaterJsonPreferNsis: true
+          uploadUpdaterJson: true

@@ -14,6 +14,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { check, type Update as TauriUpdate } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { animate } from "animejs";
 import {
   Check,
@@ -1329,6 +1331,11 @@ function App() {
   const [gameRunning, setGameRunning] = useState(false);
   const [toast, setToast] = useState("");
   const [toastKind, setToastKind] = useState<"notification" | "error">("notification");
+  const [availableUpdate, setAvailableUpdate] = useState<TauriUpdate | null>(null);
+  const [updatePhase, setUpdatePhase] = useState<"ready" | "downloading" | "installing" | "error">("ready");
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateError, setUpdateError] = useState("");
+  const updateCheckStarted = useRef(false);
   const [logs, setLogs] = useState<LogEntry[]>(() => { try { return JSON.parse(localStorage.getItem("bloom-live-logs") || "[]").slice(-600); } catch { return []; } });
   const [signInOpen, setSignInOpen] = useState(false);
   const [profile, setProfile] = useState<MinecraftProfile | null>(() => {
@@ -1361,6 +1368,49 @@ function App() {
     document.documentElement.style.setProperty("--accent", settings.accent);
     document.documentElement.dataset.theme = settings.theme;
   }, [settings]);
+  useEffect(() => {
+    if (!settings.updates || updateCheckStarted.current) return;
+    updateCheckStarted.current = true;
+    void check({ timeout: 15_000 })
+      .then((update) => {
+        if (update) setAvailableUpdate(update);
+      })
+      .catch(() => {
+        updateCheckStarted.current = false;
+      });
+  }, [settings.updates]);
+
+  const installUpdate = async () => {
+    if (!availableUpdate || updatePhase !== "ready") return;
+    setUpdatePhase("downloading");
+    setUpdateError("");
+    let downloaded = 0;
+    let total = 0;
+    try {
+      await availableUpdate.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          total = event.data.contentLength || 0;
+          setUpdateProgress(0);
+        } else if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          if (total > 0) setUpdateProgress(Math.min(100, (downloaded / total) * 100));
+        } else {
+          setUpdateProgress(100);
+          setUpdatePhase("installing");
+        }
+      });
+      await relaunch();
+    } catch (error) {
+      setUpdatePhase("error");
+      setUpdateError(String(error));
+    }
+  };
+
+  const postponeUpdate = async () => {
+    if (!availableUpdate || updatePhase !== "ready") return;
+    await availableUpdate.close().catch(() => {});
+    setAvailableUpdate(null);
+  };
   useEffect(() => monitorBackend((status) => {
     document.documentElement.dataset.backend = status?.status === "ok" ? "online" : "offline";
   }), []);
@@ -1846,6 +1896,27 @@ function App() {
           <button>Coming soon</button>
         </div>
       )}
+      {availableUpdate && <div className="update-overlay" role="dialog" aria-modal="true" aria-labelledby="update-title">
+        <section className="update-dialog">
+          <div className="update-mark"><Download size={24} /></div>
+          <div className="update-copy">
+            <span className="update-eyebrow">Bloom Client update</span>
+            <h2 id="update-title">Version {availableUpdate.version} is ready</h2>
+            {updatePhase === "ready" && <p>Bloom will download and install this update securely in the background. The launcher will close briefly and reopen automatically when it is finished.</p>}
+            {updatePhase === "downloading" && <p>Downloading the signed update package…</p>}
+            {updatePhase === "installing" && <p>Installing the update now. Bloom will restart in a moment.</p>}
+            {updatePhase === "error" && <p className="update-error">The update could not be installed: {updateError}</p>}
+          </div>
+          {updatePhase !== "ready" && updatePhase !== "error" && <div className="update-progress"><i style={{ width: `${updateProgress}%` }} /><span>{updatePhase === "installing" ? "Installing" : `${Math.round(updateProgress)}%`}</span></div>}
+          {updatePhase === "ready" && availableUpdate.body && <div className="update-notes"><b>What’s new</b><p>{availableUpdate.body}</p></div>}
+          <div className="update-actions">
+            {updatePhase === "ready" && <button className="update-later" onClick={() => void postponeUpdate()}>Later</button>}
+            {updatePhase === "ready" && <button className="update-install" onClick={() => void installUpdate()}><Download size={15} />Update and restart</button>}
+            {updatePhase === "error" && <button className="update-later" onClick={() => { setAvailableUpdate(null); setUpdatePhase("ready"); }}>Close</button>}
+            {updatePhase === "error" && <button className="update-install" onClick={() => { setUpdatePhase("ready"); setUpdateError(""); }}><RotateCw size={15} />Try again</button>}
+          </div>
+        </section>
+      </div>}
       {toast && <div className={`launch-toast ${toastKind}`} role="status">
         <div className="launch-toast-title">{toastKind === "error" ? <TriangleAlert size={17} /> : <Bell size={17} />}<b>{toastKind === "error" ? "Launch issue" : "Notification"}</b></div>
         <span>{toast}</span>

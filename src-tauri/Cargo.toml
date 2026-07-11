@@ -1,6 +1,6 @@
 [package]
 name = "bloomclient"
-version = "0.1.0"
+version = "1.0.0"
 description = "An open-source Minecraft desktop client"
 authors = ["Bloom Client contributors"]
 edition = "2021"
@@ -24,3 +24,5 @@ mc-launcher-core = "0.1.1"
 keyring = { version = "3.6.3", features = ["windows-native"] }
 base64 = "0.22"
 rfd = "0.15"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

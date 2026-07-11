@@ -94,6 +94,23 @@ npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
+## Publishing an update
+
+Bloom Client updates are built, signed, and distributed through GitHub Releases.
+
+1. Change the value in [`VERSION`](VERSION), using a tag such as `v1.0.1`.
+2. Commit and push that version change with the release's code.
+3. Create and push a Git tag with the exact same value:
+
+```powershell
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+The release workflow verifies that the tag and `VERSION` match, synchronizes the internal application versions, builds the signed Windows installer, and creates a draft GitHub Release containing the installer, signature, and updater manifest. Add the release notes and publish the draft when it is ready for users.
+
+Never commit or replace the private updater signing key. Existing installations trust that key, so losing it would prevent those installations from accepting future updates.
+
 ## Contributing
 
 Contributions, bug reports, and thoughtful feature proposals are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
