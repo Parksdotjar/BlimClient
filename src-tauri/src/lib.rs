@@ -727,10 +727,19 @@ fn apply_autotune_to_config(
             "true", "2", "1", "0", "4", "true", "1.0", "5", "64", "true", "false", "10", "1", "1",
         ),
     };
+    let (clouds, vignette, chunk_fade) = match preset {
+        "fast" => ("\"fast\"", "false", "0.0"),
+        "fabulous" => ("\"true\"", "true", "0.75"),
+        _ => ("\"true\"", "true", "0.5"),
+    };
     patch_options(
         &std::path::PathBuf::from(&config.directory).join("options.txt"),
         &[
             ("graphicsPreset", format!("\"{preset}\"")),
+            ("maxFps", "260".into()),
+            ("enableVsync", "false".into()),
+            ("fullscreen", "true".into()),
+            ("exclusiveFullscreen", "false".into()),
             ("ao", ao.into()),
             ("biomeBlendRadius", blend.into()),
             ("prioritizeChunkUpdates", updates.into()),
@@ -745,6 +754,9 @@ fn apply_autotune_to_config(
             ("weatherRadius", weather.into()),
             ("maxAnisotropyBit", anisotropy.into()),
             ("textureFiltering", filtering.into()),
+            ("renderClouds", clouds.into()),
+            ("vignette", vignette.into()),
+            ("chunkSectionFadeInTime", chunk_fade.into()),
             (
                 "renderDistance",
                 profile.render_distance.clamp(2, 32).to_string(),
