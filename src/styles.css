@@ -16,7 +16,7 @@
 }
 body {
   margin: 0;
-  min-width: 1100px;
+  min-width: 860px;
   min-height: 100vh;
   background: #0e1113;
 }
@@ -2346,3 +2346,101 @@ body,
 .hero-recent-instance em { color: var(--accent); font-size: 10px; font-style: normal; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .hero-recent-instance b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; }
 .hero-recent-instance button { display: flex; align-items: center; gap: 7px; padding: 12px 18px; background: var(--accent); }
+
+/* Responsive desktop shell */
+@media (max-width: 1350px) {
+  .sidebar {
+    width: 240px;
+    padding-inline: 16px;
+  }
+
+  .content {
+    padding-inline: 24px;
+  }
+
+  .ad-rail {
+    width: 220px;
+    flex-basis: 220px;
+    padding-inline: 12px;
+  }
+
+  .ad-placeholder {
+    min-height: 165px;
+  }
+
+  .quick-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hero {
+    gap: 22px;
+  }
+
+  .hero > div:first-child {
+    min-width: 0;
+  }
+
+  .hero-recent-instance {
+    width: min(500px, 54%);
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 1100px) {
+  .ad-rail {
+    display: none;
+  }
+
+  .sidebar {
+    width: 220px;
+  }
+
+  .content {
+    padding-inline: 20px;
+  }
+
+  .hero-recent-instance {
+    width: min(520px, 55%);
+  }
+}
+
+@media (max-width: 940px) {
+  .sidebar {
+    width: 195px;
+    padding-inline: 12px;
+  }
+
+  .brand {
+    gap: 9px;
+  }
+
+  .brand b {
+    font-size: 16px;
+  }
+
+  .content {
+    padding-inline: 16px;
+  }
+
+  .hero {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 18px;
+    padding-top: 34px;
+  }
+
+  .hero-recent-instance {
+    width: 100%;
+    height: 100px;
+  }
+
+  .columns {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  .quick-card {
+    min-height: 92px;
+    padding: 13px;
+  }
+}

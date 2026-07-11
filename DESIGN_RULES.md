@@ -61,6 +61,10 @@ These rules apply to every future screen, component, and interaction in Bloom Cl
 
 ## Implementation checklist
 
+- Bloom opens centered at a generous desktop size without forcing maximized mode, while retaining a practical minimum window size.
+- Responsive layouts must reflow before labels or descriptions become cramped: reduce fixed rails, hide the ad rail when necessary, stack home columns, and never solve narrow layouts by shrinking readable text.
+- Test the home screen at the default window size and at the minimum supported window size.
+
 - Test the screen at a short viewport and a tall viewport.
 - Verify the sidebar stays fixed while the content scrolls.
 - Verify theme and accent changes affect every intended highlight.
