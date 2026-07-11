@@ -1029,6 +1029,24 @@ type DownloadViewState = { active: boolean; progress: number; state: string; mes
 type CompletedDownload = { id: string; name: string; version: string; loader?: string; targetName?: string; kind?: "mod" | "game"; completedAt: number };
 
 const formatBytes = (bytes = 0) => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
+
+function InstancesPage({ instances, busy, onOpen, onPlay, onCreate }: { instances: InstanceDraft[]; busy: boolean; onOpen: (instance: InstanceDraft) => void; onPlay: (instance: InstanceDraft) => void; onCreate: () => void }) {
+  const [query, setQuery] = useState("");
+  const [loader, setLoader] = useState("All");
+  const visible = instances.filter((instance) => instance.name.toLowerCase().includes(query.toLowerCase()) && (loader === "All" || instance.loader.toLowerCase() === loader.toLowerCase()));
+  const loaders = ["All", ...Array.from(new Set(instances.map((instance) => instance.loader)))];
+  return <div className="instances-page">
+    <header className="instances-page-heading"><div><span className="instances-eyebrow">YOUR LIBRARY</span><h1>All Instances</h1><p>Every world, pack, and client setup in one place.</p></div><button className="instances-create" onClick={onCreate}><CirclePlus size={17} />New instance</button></header>
+    <section className="instances-toolbar"><div className="instances-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your instances..." /></div><div className="loader-filters">{loaders.map((item) => <button key={item} className={loader === item ? "selected" : ""} onClick={() => setLoader(item)}>{item}</button>)}</div><span className="instances-count">{visible.length} {visible.length === 1 ? "instance" : "instances"}</span></section>
+    {visible.length ? <div className="instances-grid">{visible.map((instance) => <article className="instance-library-card" key={instance.id} onClick={() => onOpen(instance)}>
+      <div className="library-card-accent" />
+      <div className="library-card-top"><span className="library-instance-icon">{instance.icon ? <img src={instance.icon} alt="" /> : <span aria-hidden="true">?</span>}</span><span className="library-loader">{instance.loader}</span></div>
+      <div className="library-card-copy"><h2>{instance.name}</h2><p>Minecraft {instance.version}</p><small title={instance.directory}>{instance.directory}</small></div>
+      <div className="library-card-actions"><button className="library-play" disabled={busy} onClick={(event) => { event.stopPropagation(); onPlay(instance); }}><Play size={15} fill="currentColor" />Play</button><button className="library-folder" onClick={(event) => { event.stopPropagation(); void invoke("open_instance_folder", { instanceId: instance.id }); }}><FolderOpen size={16} /></button></div>
+    </article>)}</div> : <div className="instances-empty"><Cuboid size={30} /><h2>{instances.length ? "No matching instances" : "Your library is empty"}</h2><p>{instances.length ? "Try another name or loader filter." : "Create your first instance to start building your library."}</p>{!instances.length && <button onClick={onCreate}><CirclePlus size={16} />New instance</button>}</div>}
+  </div>;
+}
+
 function DownloadsPage({ download, instances, completed, onClear, onCancel }: { download: DownloadViewState; instances: InstanceDraft[]; completed: CompletedDownload[]; onClear: () => void; onCancel: () => void }) {
   const activeInstance = instances.find(instance => instance.id === download.instanceId) || instances[0];
   const failed = download.state === "error";
@@ -1053,7 +1071,7 @@ function DownloadsPage({ download, instances, completed, onClear, onCancel }: { 
 }
 
 function App() {
-  const [page, setPage] = useState<"home" | "settings" | "new-instance" | "downloads" | "instance">(
+  const [page, setPage] = useState<"home" | "settings" | "new-instance" | "downloads" | "instance" | "instances">(
     "home",
   );
   const [instances, setInstances] = useState<InstanceDraft[]>([]);
@@ -1322,7 +1340,7 @@ function App() {
         <p className="section-label">INSTANCES</p>
         <div className="instance-list">
           {instances.length ? (
-            instances.map((instance) => (
+            instances.slice(0, 3).map((instance) => (
               <button
                 className={`sidebar-instance ${page === "instance" && selectedInstanceId === instance.id ? "active" : ""}`}
                 key={instance.id}
@@ -1344,10 +1362,10 @@ function App() {
         </div>
         <button
           className="add-instance"
-          onClick={() => setPage("new-instance")}
+          onClick={() => setPage("instances")}
         >
-          <CirclePlus size={16} />
-          <span>Add instance</span>
+          <ChevronRight size={16} />
+          <span>View all</span>
         </button>
         <div className="sidebar-spacer" />
         <button className={`sidebar-link downloads-link ${page === "downloads" ? "active" : ""}`} onClick={() => setPage("downloads")}>
@@ -1400,6 +1418,8 @@ function App() {
       <main className="content">
         {page === "instance" && selectedInstance ? (
           <InstancePage instance={selectedInstance} busy={download.active || gameRunning} onPlay={() => void launch(selectedInstance)} onInstallMod={(mod) => void installMod(selectedInstance, mod)} onChanged={(changed) => setInstances(current => current.map(instance => instance.id === changed.id ? changed : instance))} />
+        ) : page === "instances" ? (
+          <InstancesPage instances={instances} busy={download.active || gameRunning} onCreate={() => setPage("new-instance")} onPlay={(instance) => void launch(instance)} onOpen={(instance) => { setSelectedInstanceId(instance.id); setPage("instance"); }} />
         ) : page === "downloads" ? (
           <DownloadsPage download={download} instances={instances} completed={completedDownloads} onClear={() => setCompletedDownloads([])} onCancel={() => void invoke("cancel_minecraft_launch")} />
         ) : page === "settings" ? (
@@ -1454,12 +1474,12 @@ function App() {
               <section className="recent">
                 <div className="section-heading">
                   <h2>Recent Instances</h2>
-                  <button>
+                  <button onClick={() => setPage("instances")}>
                     View all <ChevronRight size={15} />
                   </button>
                 </div>
                 {instances.length
-                  ? instances.map((instance) => (
+                  ? instances.slice(0, 4).map((instance) => (
                       <div className="instance-card" key={instance.id} onClick={() => { setSelectedInstanceId(instance.id); setPage("instance"); }}>
                         {instance.icon ? <img className="recent-instance-icon" src={instance.icon} alt="" /> : <span className="instance-placeholder-icon" aria-hidden="true">?</span>}
                         <div>
@@ -1476,7 +1496,7 @@ function App() {
                       </div>
                     ))
                   : [1, 2, 3, 4].map((i) => <EmptySlot key={i} />)}
-                <button className="view-all">
+                <button className="view-all" onClick={() => setPage("instances")}>
                   View all instances <ChevronRight size={16} />
                 </button>
               </section>

@@ -47,6 +47,7 @@ These rules apply to every future screen, component, and interaction in Bloom Cl
 - Provider catalogs must filter by the instance's exact Minecraft version and loader before showing an install action.
 - Catalog installation uses the accent-filled plus action and reports genuine byte progress through Downloads; returning to the installed list uses a compact red Back action with a rounded left-arrow icon.
 - Instance collection search and filters live in a taller, narrower floating surface overlapping the collection's bottom edge by roughly half its height; its icon, text, and filter scale together, and pagination sits beneath it while the list scrolls independently.
+- The full instance library uses a responsive card grid with direct Play and folder actions, while the sidebar remains a short recent-access list rather than duplicating the entire library.
 
 ## Scrollbars
 
