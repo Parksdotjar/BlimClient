@@ -1313,7 +1313,20 @@ function App() {
       onKeyDown={handleKeyDown}
       tabIndex={-1}
     >
-      <div className="window-drag-region" data-tauri-drag-region>
+      <div
+        className="window-drag-region"
+        data-tauri-drag-region
+        onMouseDown={(event) => {
+          if (event.button === 0 && event.target === event.currentTarget) {
+            void getCurrentWindow().startDragging();
+          }
+        }}
+        onDoubleClick={(event) => {
+          if (event.target === event.currentTarget) {
+            void getCurrentWindow().toggleMaximize();
+          }
+        }}
+      >
         <div className="window-controls">
           <button className="window-control" onClick={() => void getCurrentWindow().minimize()} aria-label="Minimize Bloom Client"><Minus size={15} /></button>
           <button className="window-control" onClick={() => void getCurrentWindow().toggleMaximize()} aria-label="Maximize or restore Bloom Client"><Square size={12} /></button>
