@@ -175,6 +175,8 @@ internal sealed class ReleaseManagerForm : Form
         publish.Enabled = false;
         SetInputs(false);
         terminal.Clear();
+        var versionPrepared = false;
+        var releaseCommitted = false;
         try
         {
             Step("Preflight", "Checking repository and GitHub access");
@@ -183,12 +185,13 @@ internal sealed class ReleaseManagerForm : Form
             var branch = (await CaptureOutput("git", "branch --show-current")).Trim();
             if (branch != "main") throw new InvalidOperationException("The repository must be on the main branch.");
             var dirty = await CaptureOutput("git", "status --porcelain --untracked-files=all");
-            if (!string.IsNullOrWhiteSpace(dirty)) throw new InvalidOperationException("Commit or discard the current repository changes before publishing a release.");
+            if (!string.IsNullOrWhiteSpace(dirty)) throw new InvalidOperationException($"The repository has uncommitted changes:\n{dirty.Trim()}\n\nCommit or discard them before publishing a release.");
             var divergence = (await CaptureOutput("git", "rev-list --left-right --count origin/main...HEAD")).Trim();
             if (divergence != "0\t0" && divergence != "0 0") throw new InvalidOperationException("Local main and origin/main must match before releasing.");
             if (!string.IsNullOrWhiteSpace(await CaptureOutput("git", $"tag -l {Quote(tag)}"))) throw new InvalidOperationException($"Tag {tag} already exists.");
 
             Step("Version", $"Synchronizing Bloom Client to {tag}");
+            versionPrepared = true;
             await File.WriteAllTextAsync(Path.Combine(repo, "VERSION"), tag + Environment.NewLine);
             await MustRun("npm.cmd", "run version:sync");
 
@@ -200,6 +203,7 @@ internal sealed class ReleaseManagerForm : Form
             Step("Git", "Committing and pushing the release version");
             await MustRun("git", "add VERSION package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json");
             await MustRun("git", $"commit -m {Quote($"Release {tag}")}");
+            releaseCommitted = true;
             await MustRun("git", "push origin main");
             await MustRun("git", $"tag -a {Quote(tag)} -m {Quote($"Bloom Client {tag}")}");
             await MustRun("git", $"push origin {Quote(tag)}");
@@ -226,6 +230,15 @@ internal sealed class ReleaseManagerForm : Form
         }
         catch (Exception error)
         {
+            if (versionPrepared && !releaseCommitted)
+            {
+                Log("\n[ROLLBACK] Restoring the incomplete version bump so this release can be retried.\n", Color.FromArgb(210, 174, 109));
+                await RunProcess(
+                    "git",
+                    "restore -- VERSION package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json",
+                    true
+                );
+            }
             Log($"\nERROR: {error.Message}\n", Color.FromArgb(241, 103, 103));
             status.Text = "Release stopped — review the terminal";
             status.ForeColor = Color.FromArgb(241, 103, 103);
@@ -268,7 +281,14 @@ internal sealed class ReleaseManagerForm : Form
     private async Task<ProcessResult> RunProcess(string file, string arguments, bool stream)
     {
         if (stream) Log($"> {file} {arguments}\n", Accent);
-        var info = new ProcessStartInfo(file, arguments)
+        var executable = file;
+        var processArguments = arguments;
+        if (file.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
+        {
+            executable = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+            processArguments = $"/d /s /c \"\"{file}\" {arguments}\"";
+        }
+        var info = new ProcessStartInfo(executable, processArguments)
         {
             WorkingDirectory = repo,
             UseShellExecute = false,
