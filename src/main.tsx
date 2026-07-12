@@ -30,6 +30,7 @@ import {
   Cpu,
   Cuboid,
   Download,
+  Folder,
   FolderOpen,
   House,
   Layers3,
@@ -1374,7 +1375,7 @@ function InstancesPage({ instances, busy, onOpen, onPlay, onCreate }: { instance
     {visible.length ? <div className="instances-grid">{visible.map((instance) => <article className="instance-library-card" key={instance.id} onClick={() => onOpen(instance)}>
       <div className="library-card-top"><span className="library-instance-icon">{instance.icon ? <img src={instance.icon} alt="" /> : <span aria-hidden="true">?</span>}</span><img className="library-loader-logo" src={instance.loader.toLowerCase().includes("fabric") ? "/loader-fabric.png" : "/loader-vanilla.png"} alt={`${instance.loader} loader`} /></div>
       <div className="library-card-copy"><h2>{instance.name}</h2><p>Minecraft {instance.version}</p><small title={instance.directory}>{instance.directory}</small></div>
-      <div className="library-card-actions"><button className="library-play" disabled={busy} onClick={(event) => { event.stopPropagation(); onPlay(instance); }}><Play size={15} fill="currentColor" />Play</button><button className="library-folder" onClick={(event) => { event.stopPropagation(); void invoke("open_instance_folder", { instanceId: instance.id }); }}><FolderOpen size={16} /></button></div>
+      <div className="library-card-actions"><button className="library-play" disabled={busy} onClick={(event) => { event.stopPropagation(); onPlay(instance); }}><Play size={15} fill="currentColor" />Play</button><button className="library-folder" onClick={(event) => { event.stopPropagation(); void invoke("open_instance_folder", { instanceId: instance.id }); }} aria-label={`Open ${instance.name} folder`}><span className="animated-folder"><Folder className="folder-closed" size={17} /><FolderOpen className="folder-open" size={17} /></span></button></div>
     </article>)}</div> : <div className="instances-empty"><Cuboid size={30} /><h2>{instances.length ? "No matching instances" : "Your library is empty"}</h2><p>{instances.length ? "Try another name or loader filter." : "Create your first instance to start building your library."}</p>{!instances.length && <button onClick={onCreate}><CirclePlus size={16} />New instance</button>}</div>}
   </div>;
 }
