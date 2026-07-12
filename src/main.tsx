@@ -1881,7 +1881,7 @@ function App() {
                     {pendingAccountId === account.id && <button className="account-confirm" disabled={switchingAccount} onClick={() => void switchAccount(account)}>{switchingAccount ? "Switching…" : "Confirm"}</button>}
                   </div>)}
                 </div>
-                <button className="add-minecraft-account" onClick={() => { setProfileMenuOpen(false); setPendingAccountId(null); setSignInOpen(true); }}><CirclePlus size={15} />Add account</button>
+                <button className="add-minecraft-account" onClick={() => { setProfileMenuOpen(false); setPendingAccountId(null); setSignInOpen(true); }}><span><Plus size={16} /></span><b>Add account</b></button>
               </div>}
             </div>
           ) : (
