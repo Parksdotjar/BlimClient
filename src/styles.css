@@ -2346,8 +2346,13 @@ body,
 @media (prefers-reduced-motion: reduce) { .animated-folder, .animated-folder svg { transition: none; } }
 
 html[data-animations="on"] button:not(:disabled) { transform-origin: center; }
-html[data-animations="on"] button:active:not(:disabled) { transform: translateY(3px) scale(.92) !important; filter: brightness(.86); transition: transform 150ms cubic-bezier(.22,.7,.28,1), filter 150ms ease !important; }
-button.button-press-preview { --animate-duration: 500ms; pointer-events: none; transform-origin: center; will-change: transform, filter; animation-timing-function: cubic-bezier(.2,.75,.25,1) !important; }
+html[data-animations="on"] button:active:not(:disabled) { transform: translateY(1.5px) scale(.96) !important; filter: brightness(.93); transition: transform 190ms cubic-bezier(.22,.7,.28,1), filter 190ms ease !important; }
+button.button-press-preview { --animate-duration: 620ms; pointer-events: none; transform-origin: center; will-change: transform, filter; animation-timing-function: cubic-bezier(.22,.65,.25,1) !important; }
+@keyframes pulse {
+  from { transform: scale3d(1, 1, 1); }
+  48% { transform: scale3d(1.022, 1.022, 1.022); }
+  to { transform: scale3d(1, 1, 1); }
+}
 @media (prefers-reduced-motion: reduce) { button.button-press-preview { animation: none !important; } }
 .instances-empty { min-height: 390px; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed var(--border); border-radius: 15px; background: color-mix(in srgb, var(--panel) 55%, transparent); color: var(--muted); text-align: center; }
 .instances-empty h2 { margin: 14px 0 0; color: var(--text); font-size: 18px; }.instances-empty p { margin: 7px 0 0; font-size: 11px; }.instances-empty button { margin-top: 18px; display: flex; align-items: center; gap: 7px; padding: 10px 14px; border: 0; border-radius: 9px; background: var(--accent); color: #101310; font-size: 11px; font-weight: 850; }

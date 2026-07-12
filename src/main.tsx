@@ -1494,7 +1494,7 @@ function App() {
         if (!button.isConnected || button.disabled) return;
         replaying.add(button);
         button.click();
-      }, 500);
+      }, 620);
       timers.add(timer);
     };
     document.addEventListener("click", pressBeforeAction, true);
