@@ -1464,6 +1464,43 @@ function App() {
     document.documentElement.style.setProperty("--accent", settings.accent);
     document.documentElement.dataset.theme = settings.theme;
   }, [settings]);
+  useEffect(() => {
+    if (!settings.animations || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const pending = new WeakSet<HTMLButtonElement>();
+    const replaying = new WeakSet<HTMLButtonElement>();
+    const timers = new Set<number>();
+    const pressBeforeAction = (event: globalThis.MouseEvent) => {
+      if (event.button !== 0 || !(event.target instanceof Element)) return;
+      const button = event.target.closest("button");
+      if (!(button instanceof HTMLButtonElement) || button.disabled) return;
+      if (replaying.has(button)) {
+        replaying.delete(button);
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (pending.has(button)) return;
+      pending.add(button);
+      button.classList.remove("button-press-preview");
+      void button.offsetWidth;
+      button.classList.add("button-press-preview");
+      const timer = window.setTimeout(() => {
+        timers.delete(timer);
+        pending.delete(button);
+        button.classList.remove("button-press-preview");
+        if (!button.isConnected || button.disabled) return;
+        replaying.add(button);
+        button.click();
+      }, 145);
+      timers.add(timer);
+    };
+    document.addEventListener("click", pressBeforeAction, true);
+    return () => {
+      document.removeEventListener("click", pressBeforeAction, true);
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [settings.animations]);
   const checkForUpdates = async (manual = false) => {
     if (updateChecking) return;
     setUpdateChecking(true);

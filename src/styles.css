@@ -2344,6 +2344,15 @@ body,
 .library-folder:hover .folder-open { opacity: 1; transform: translateY(0) rotate(0deg) scale(1.05); }
 .library-folder:active .animated-folder { transform: translateY(1px) rotate(0deg) scale(.92); transition-duration: 100ms; }
 @media (prefers-reduced-motion: reduce) { .animated-folder, .animated-folder svg { transition: none; } }
+
+button.button-press-preview { pointer-events: none; animation: bloom-button-press 145ms cubic-bezier(.22,.75,.28,1) both !important; transform-origin: center; will-change: transform; }
+@keyframes bloom-button-press {
+  0% { transform: translateY(0) scale(1); }
+  38% { transform: translateY(2px) scale(.955); }
+  76% { transform: translateY(-1px) scale(1.018); }
+  100% { transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) { button.button-press-preview { animation: none !important; } }
 .instances-empty { min-height: 390px; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed var(--border); border-radius: 15px; background: color-mix(in srgb, var(--panel) 55%, transparent); color: var(--muted); text-align: center; }
 .instances-empty h2 { margin: 14px 0 0; color: var(--text); font-size: 18px; }.instances-empty p { margin: 7px 0 0; font-size: 11px; }.instances-empty button { margin-top: 18px; display: flex; align-items: center; gap: 7px; padding: 10px 14px; border: 0; border-radius: 9px; background: var(--accent); color: #101310; font-size: 11px; font-weight: 850; }
 @media (max-width: 1320px) { .instances-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .instances-toolbar { flex-wrap: wrap; }.instances-count { margin-left: auto; } }
