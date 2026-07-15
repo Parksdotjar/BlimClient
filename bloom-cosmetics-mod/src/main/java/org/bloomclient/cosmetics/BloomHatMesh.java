@@ -17,9 +17,17 @@ import java.util.List;
 public final class BloomHatMesh {
     private static final int MAX_CUBES = 512;
     private final List<Quad> quads;
+    private final Animation animation;
+    private final boolean hasWingCenter;
+    private final boolean hasWingLeft;
+    private final boolean hasWingRight;
 
-    private BloomHatMesh(List<Quad> quads) {
+    private BloomHatMesh(List<Quad> quads, Animation animation) {
         this.quads = List.copyOf(quads);
+        this.animation = animation;
+        this.hasWingCenter = quads.stream().anyMatch(quad -> quad.part == WingPart.CENTER);
+        this.hasWingLeft = quads.stream().anyMatch(quad -> quad.part == WingPart.LEFT);
+        this.hasWingRight = quads.stream().anyMatch(quad -> quad.part == WingPart.RIGHT);
     }
 
     public static BloomHatMesh parse(String source) {
@@ -49,11 +57,36 @@ public final class BloomHatMesh {
         List<Quad> output = new ArrayList<>(cubes.size() * 6);
         for (JsonElement element : cubes) addCube(output, element.getAsJsonObject(), uvWidth, uvHeight, alignWingFacesWithPreview);
         if (output.isEmpty()) throw new IllegalArgumentException("Bloom hat model has no visible faces");
-        return new BloomHatMesh(output);
+        return new BloomHatMesh(output, animation(root, alignWingFacesWithPreview));
     }
 
+    public Animation animation() {
+        return animation;
+    }
+
+    public boolean hasWingCenter() { return hasWingCenter; }
+    public boolean hasWingLeft() { return hasWingLeft; }
+    public boolean hasWingRight() { return hasWingRight; }
+
     public void render(MatrixStack.Entry entry, VertexConsumer consumer, int light) {
+        render(entry, consumer, light, null);
+    }
+
+    public void renderWingCenter(MatrixStack.Entry entry, VertexConsumer consumer, int light) {
+        render(entry, consumer, light, WingPart.CENTER);
+    }
+
+    public void renderWingLeft(MatrixStack.Entry entry, VertexConsumer consumer, int light) {
+        render(entry, consumer, light, WingPart.LEFT);
+    }
+
+    public void renderWingRight(MatrixStack.Entry entry, VertexConsumer consumer, int light) {
+        render(entry, consumer, light, WingPart.RIGHT);
+    }
+
+    private void render(MatrixStack.Entry entry, VertexConsumer consumer, int light, WingPart requestedPart) {
         for (Quad quad : quads) {
+            if (requestedPart != null && quad.part != requestedPart) continue;
             for (Vertex vertex : quad.vertices) {
                 consumer.vertex(entry, vertex.x, vertex.y, vertex.z)
                     .color(255, 255, 255, 255)
@@ -77,6 +110,10 @@ public final class BloomHatMesh {
         float x2 = Math.max(from.x, to.x) / 16.0f;
         float y2 = Math.max(from.y, to.y) / 16.0f;
         float z2 = Math.max(from.z, to.z) / 16.0f;
+        float centerX = (from.x + to.x) * 0.5f;
+        WingPart wingPart = !alignWingFacesWithPreview || Math.abs(centerX) <= 0.01f
+            ? WingPart.CENTER
+            : centerX < 0 ? WingPart.LEFT : WingPart.RIGHT;
         Vector3f scaledPivot = new Vector3f(pivot).div(16.0f);
         Quaternionf transform = new Quaternionf().rotateZYX(
             (float) Math.toRadians(rotation.z),
@@ -86,22 +123,22 @@ public final class BloomHatMesh {
         JsonObject faces = cube.getAsJsonObject("faces");
         if (faces == null) return;
 
-        addFace(output, faces, "east", textureWidth, textureHeight, false, transform, scaledPivot, new Vector3f(1, 0, 0),
+        addFace(output, faces, "east", textureWidth, textureHeight, false, wingPart, transform, scaledPivot, new Vector3f(1, 0, 0),
             point(x2, y1, z1), point(x2, y1, z2), point(x2, y2, z2), point(x2, y2, z1));
-        addFace(output, faces, "west", textureWidth, textureHeight, false, transform, scaledPivot, new Vector3f(-1, 0, 0),
+        addFace(output, faces, "west", textureWidth, textureHeight, false, wingPart, transform, scaledPivot, new Vector3f(-1, 0, 0),
             point(x1, y1, z2), point(x1, y1, z1), point(x1, y2, z1), point(x1, y2, z2));
-        addFace(output, faces, "down", textureWidth, textureHeight, false, transform, scaledPivot, new Vector3f(0, 1, 0),
+        addFace(output, faces, "down", textureWidth, textureHeight, false, wingPart, transform, scaledPivot, new Vector3f(0, 1, 0),
             point(x1, y2, z1), point(x2, y2, z1), point(x2, y2, z2), point(x1, y2, z2));
-        addFace(output, faces, "up", textureWidth, textureHeight, false, transform, scaledPivot, new Vector3f(0, -1, 0),
+        addFace(output, faces, "up", textureWidth, textureHeight, false, wingPart, transform, scaledPivot, new Vector3f(0, -1, 0),
             point(x1, y1, z2), point(x2, y1, z2), point(x2, y1, z1), point(x1, y1, z1));
-        addFace(output, faces, "south", textureWidth, textureHeight, alignWingFacesWithPreview, transform, scaledPivot, new Vector3f(0, 0, 1),
+        addFace(output, faces, "south", textureWidth, textureHeight, alignWingFacesWithPreview, wingPart, transform, scaledPivot, new Vector3f(0, 0, 1),
             point(x2, y1, z2), point(x1, y1, z2), point(x1, y2, z2), point(x2, y2, z2));
-        addFace(output, faces, "north", textureWidth, textureHeight, alignWingFacesWithPreview, transform, scaledPivot, new Vector3f(0, 0, -1),
+        addFace(output, faces, "north", textureWidth, textureHeight, alignWingFacesWithPreview, wingPart, transform, scaledPivot, new Vector3f(0, 0, -1),
             point(x1, y1, z1), point(x2, y1, z1), point(x2, y2, z1), point(x1, y2, z1));
     }
 
     private static void addFace(List<Quad> output, JsonObject faces, String name, float textureWidth, float textureHeight,
-                                boolean reverseU, Quaternionf rotation, Vector3f pivot, Vector3f normal, Vector3f... points) {
+                                boolean reverseU, WingPart wingPart, Quaternionf rotation, Vector3f pivot, Vector3f normal, Vector3f... points) {
         JsonObject face = faces.has(name) && faces.get(name).isJsonObject() ? faces.getAsJsonObject(name) : null;
         if (face == null || !face.has("uv")) return;
         JsonArray uv = face.getAsJsonArray("uv");
@@ -122,7 +159,38 @@ public final class BloomHatMesh {
             vertices[index] = new Vertex(transformed.x, transformed.y, transformed.z, coords[uvIndex][0], coords[uvIndex][1]);
         }
         Vector3f transformedNormal = rotation.transform(new Vector3f(normal)).normalize();
-        output.add(new Quad(vertices, transformedNormal));
+        output.add(new Quad(vertices, transformedNormal, wingPart));
+    }
+
+    private static Animation animation(JsonObject root, boolean wingModel) {
+        if (!root.has("animation") || !root.get("animation").isJsonObject()) return Animation.NONE;
+        JsonObject value = root.getAsJsonObject("animation");
+        String type = value.has("type") && value.get("type").isJsonPrimitive()
+            ? value.get("type").getAsString().toLowerCase()
+            : "none";
+        float speed = finiteOrDefault(value, "speed", 0.0f);
+        if (!wingModel && type.equals("spin") && speed > 0) {
+            return new Animation(AnimationType.SPIN, clamp(speed, 0.05f, 4.0f), 0.0f);
+        }
+        if (wingModel && type.equals("flap") && speed > 0) {
+            float amplitude = clamp(finiteOrDefault(value, "amplitude", 18.0f), 1.0f, 60.0f);
+            return new Animation(AnimationType.FLAP, clamp(speed, 0.05f, 4.0f), amplitude);
+        }
+        return Animation.NONE;
+    }
+
+    private static float finiteOrDefault(JsonObject object, String key, float fallback) {
+        if (!object.has(key) || !object.get(key).isJsonPrimitive()) return fallback;
+        try {
+            float value = object.get(key).getAsFloat();
+            return Float.isFinite(value) ? value : fallback;
+        } catch (RuntimeException ignored) {
+            return fallback;
+        }
+    }
+
+    private static float clamp(float value, float minimum, float maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
     }
 
     private static float number(JsonObject object, String key) {
@@ -152,6 +220,11 @@ public final class BloomHatMesh {
         return new Vector3f(x, y, z);
     }
 
+    public enum AnimationType { NONE, SPIN, FLAP }
+    public record Animation(AnimationType type, float speed, float amplitude) {
+        private static final Animation NONE = new Animation(AnimationType.NONE, 0.0f, 0.0f);
+    }
+    private enum WingPart { CENTER, LEFT, RIGHT }
     private record Vertex(float x, float y, float z, float u, float v) {}
-    private record Quad(Vertex[] vertices, Vector3f normal) {}
+    private record Quad(Vertex[] vertices, Vector3f normal, WingPart part) {}
 }

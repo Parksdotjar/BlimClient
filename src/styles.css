@@ -3087,6 +3087,28 @@ body,
 .cape-card-copy { align-self: center; min-width: 0; }
 .cape-card-copy h3 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .cape-card-copy p { margin: 5px 0 0; color: var(--muted); font-size: 9px; }
+.cosmetic-colorways {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+.cosmetic-colorways button {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  padding: 0;
+  border: 2px solid color-mix(in srgb, var(--colorway) 72%, var(--border));
+  border-radius: 50%;
+  background: var(--colorway);
+  box-shadow: inset 0 0 0 1px #fff2, 0 2px 5px #0005;
+}
+.cosmetic-colorways button.active {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, var(--border));
+  outline-offset: 2px;
+}
+.cosmetic-colorways button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .cape-card-action {
   grid-column: 1 / -1;
   min-height: 34px;

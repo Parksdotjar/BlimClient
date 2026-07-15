@@ -172,6 +172,15 @@ This file is the durable, context-independent record of bugs found in Bloom Clie
 - **Fix:** The manager now reconstructs split repository arguments, accepts the repository through an inherited environment variable, validates the resolved directory before creating the window, and displays a visible startup error if initialization fails.
 - **Verification:** Launch with `npm run release:manager`; the process must remain open and load the current repository version.
 
+## BLOOM-019 — Bloom Cosmetics rejected Fabric Loader 0.19.2
+
+- **Status:** Fixed
+- **Symptom:** Minecraft stopped at `Incompatible mods found` because Bloom Cosmetics required Fabric Loader 0.19.3 or later while an otherwise valid imported instance used 0.19.2.
+- **Root cause:** The mod metadata inherited the loader version used to compile the project as its minimum runtime requirement, even though Bloom Cosmetics does not call any Fabric Loader-specific API that requires 0.19.3.
+- **Fix:** Bloom Cosmetics 1.3.1 now compiles against and supports Fabric Loader 0.19.2 or later. The corrected JAR is embedded in Bloom Client, whose existing synchronization removes older `bloom-cosmetics-*.jar` files before installing the bundled version.
+- **Verification:** The Fabric build succeeds and the bundled JAR declares `fabricloader >=0.19.2`, Minecraft `1.21.11`, and Java 21.
+- **Do not repeat:** Do not automatically turn the development loader version into a stricter runtime minimum unless the mod actually depends on APIs introduced by that loader release.
+
 ## How to add a bug
 
 Use the next ID and record the same fields every time:

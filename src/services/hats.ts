@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { CosmeticColorway } from "./cosmetics";
 
 export type HatCatalogItem = {
   id: string;
@@ -10,6 +11,7 @@ export type HatCatalogItem = {
   offset: [number, number, number];
   scale: number;
   hideWithHelmet: boolean;
+  colorways: CosmeticColorway[];
 };
 
 export type HatPreviewData = { dataUrl: string; revision: string };
@@ -18,15 +20,16 @@ export type HatAccountState = {
   cartIds: string[];
   collectionIds: string[];
   equippedHatId: string | null;
+  equippedHatColorwayId: string | null;
 };
 
-type RemoteHatAccountState = { collectionIds: string[]; equippedHatId: string | null };
+type RemoteHatAccountState = { collectionIds: string[]; equippedHatId: string | null; equippedHatColorwayId: string | null };
 type HatStorageDocument = { schemaVersion: 1; accounts: Record<string, HatAccountState> };
 
 const STORAGE_KEY = "bloom-hats-v1";
 const CATALOG_CACHE_MS = 15_000;
 const ACCOUNT_CACHE_MS = 30_000;
-const emptyState = (): HatAccountState => ({ cartIds: [], collectionIds: [], equippedHatId: null });
+const emptyState = (): HatAccountState => ({ cartIds: [], collectionIds: [], equippedHatId: null, equippedHatColorwayId: null });
 const accountKey = (accountId: string | null) => accountId?.replaceAll("-", "").toLowerCase() || "signed-out";
 let catalogCache: { expiresAt: number; items: HatCatalogItem[] } | null = null;
 let catalogRequest: Promise<HatCatalogItem[]> | null = null;
@@ -45,7 +48,8 @@ const sanitize = (value: Partial<HatAccountState> | undefined): HatAccountState 
   const collectionIds = Array.isArray(value?.collectionIds) ? [...new Set(value.collectionIds.filter((id): id is string => typeof id === "string"))] : [];
   const cartIds = Array.isArray(value?.cartIds) ? [...new Set(value.cartIds.filter((id): id is string => typeof id === "string" && !collectionIds.includes(id)))] : [];
   const equippedHatId = typeof value?.equippedHatId === "string" && collectionIds.includes(value.equippedHatId) ? value.equippedHatId : null;
-  return { cartIds, collectionIds, equippedHatId };
+  const equippedHatColorwayId = equippedHatId && typeof value?.equippedHatColorwayId === "string" ? value.equippedHatColorwayId : null;
+  return { cartIds, collectionIds, equippedHatId, equippedHatColorwayId };
 };
 
 export const loadHatAccountState = (accountId: string | null) => sanitize(readDocument().accounts[accountKey(accountId)] || emptyState());
@@ -81,7 +85,7 @@ const loadAccountState = (accountId: string | null) => {
   const active = accountRequests.get(key);
   if (active) return active;
   const request = invoke<RemoteHatAccountState>("get_bloom_hat_account_state")
-    .then((remote) => saveHatAccountState(accountId, { ...local, collectionIds: remote.collectionIds, equippedHatId: remote.equippedHatId }))
+    .then((remote) => saveHatAccountState(accountId, { ...local, collectionIds: remote.collectionIds, equippedHatId: remote.equippedHatId, equippedHatColorwayId: remote.equippedHatColorwayId }))
     .catch((error) => {
       if (cached || local.collectionIds.length || local.equippedHatId) return local;
       throw error;
@@ -93,8 +97,8 @@ const loadAccountState = (accountId: string | null) => {
 
 export const hatProvider = {
   listCatalog,
-  loadPreviewData: (hatId: string) => invoke<HatPreviewData>("load_bloom_hat_preview_data", { hatId }),
+  loadPreviewData: (hatId: string, colorwayId?: string | null) => invoke<HatPreviewData>("load_bloom_hat_preview_data", { hatId, colorwayId: colorwayId || null }),
   loadAccountState,
   addToCollection: (_accountId: string | null, hatIds: string[]) => invoke<void>("add_bloom_hats_to_collection", { hatIds }),
-  setEquipped: (_accountId: string | null, hatId: string | null) => invoke<void>("set_bloom_equipped_hat", { hatId }),
+  setEquipped: (_accountId: string | null, hatId: string | null, colorwayId?: string | null) => invoke<void>("set_bloom_equipped_hat", { hatId, colorwayId: colorwayId || null }),
 };

@@ -7,6 +7,7 @@ import net.minecraft.client.render.entity.feature.FeatureRendererContext;
 import net.minecraft.client.render.entity.model.PlayerEntityModel;
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
 import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.util.math.RotationAxis;
 
 public final class BloomHatFeatureRenderer extends FeatureRenderer<PlayerEntityRenderState, PlayerEntityModel> {
     public BloomHatFeatureRenderer(FeatureRendererContext<PlayerEntityRenderState, PlayerEntityModel> context) {
@@ -22,6 +23,11 @@ public final class BloomHatFeatureRenderer extends FeatureRenderer<PlayerEntityR
         getContextModel().head.applyTransform(matrices);
         matrices.translate(asset.offsetX() / 16.0f, asset.offsetY() / 16.0f, asset.offsetZ() / 16.0f);
         matrices.scale(asset.scale(), asset.scale(), asset.scale());
+        BloomHatMesh.Animation animation = asset.mesh().animation();
+        if (animation.type() == BloomHatMesh.AnimationType.SPIN) {
+            float degrees = (float) ((System.nanoTime() * 1.0e-9 * animation.speed() * 360.0) % 360.0);
+            matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(degrees));
+        }
         queue.submitCustom(matrices, RenderLayers.entityCutoutNoCull(asset.texture()),
             (entry, consumer) -> asset.mesh().render(entry, consumer, light));
         matrices.pop();

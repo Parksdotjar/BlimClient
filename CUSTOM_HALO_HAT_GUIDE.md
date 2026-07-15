@@ -1,6 +1,6 @@
 # Creating a Custom Halo Hat for Bloom Client
 
-This guide covers the complete workflow for making a static 3D halo in Blockbench, previewing it in Bloom Cosmetics Manager, publishing it to the live catalog, and testing it in Minecraft.
+This guide covers the complete workflow for making a 3D halo in Blockbench, previewing it in Bloom Cosmetics Manager, optionally giving it Bloom's procedural spin animation, publishing it to the live catalog, and testing it in Minecraft.
 
 It is written for Bloom Cosmetics on Fabric 1.21.11 and matches Bloom's current model importer.
 
@@ -17,7 +17,7 @@ Bloom Cosmetics Manager accepts `.bbmodel` and compatible exported `.json` files
 
 Read these before modeling:
 
-- Use **cubes only**. Bloom currently does not import mesh elements, curves, toruses, locators, particles, or animations.
+- Use **cubes only**. Bloom currently does not import mesh elements, curves, toruses, locators, particles, or Blockbench animation timelines.
 - A model can contain at most **512 cubes**.
 - The model file must be valid UTF-8 JSON and smaller than **2 MB**.
 - Use exactly **one PNG texture** for the whole halo.
@@ -25,7 +25,7 @@ Read these before modeling:
 - The PNG dimensions must exactly match the Blockbench project texture resolution.
 - Supported texture dimensions are from `1×1` through `4096×4096`; `64×64` is recommended.
 - Transparency works. Emissive lighting and animated textures are not supported yet.
-- Groups are useful for organization inside Blockbench, but Bloom currently imports the cubes themselves rather than group animation behavior.
+- Groups are useful for organization inside Blockbench, but Bloom imports the cubes themselves rather than group animation behavior. Continuous halo rotation is configured later with the manager's **Spin** option.
 
 ## 1. Create the Blockbench project
 
@@ -120,7 +120,7 @@ For a static halo, each segment's pivot should normally stay at that segment's c
 
 Do not place every cube's pivot at a random shared point unless you intentionally want the geometry to swing around that point. Incorrect pivots are a common reason models look right in Blockbench but shift after conversion.
 
-Bloom supports individual cube rotations. It does not currently apply Blockbench animations or animated group transforms.
+Bloom supports individual cube rotations. It does not apply Blockbench animation timelines; the entire imported halo can instead be rotated with Bloom's optimized procedural **Spin** animation.
 
 ## 5. Create the texture
 
@@ -196,6 +196,8 @@ Keep the `.bbmodel` and `.png` together in the same folder so you do not acciden
 7. Drag the preview to inspect the front, back, sides, and top.
 8. Use the lock button if you want to stop automatic rotation while adjusting placement.
 
+The lock button controls only the preview camera. If **Spin** is selected, the halo itself keeps moving so you can judge the final in-game animation.
+
 If the Publish button remains unavailable, verify that:
 
 - Both files are selected.
@@ -254,6 +256,14 @@ Slug rules:
 ### Helmet behavior
 
 For a floating halo, **Hide under helmets** should normally be off so the halo remains visible while armor is equipped. Turn it on only if your design intersects helmets and looks broken with them.
+
+### Halo animation
+
+1. Open the **Animation** card.
+2. Select **Spin**.
+3. Start at `0.45 rps` and adjust it while watching the live preview.
+
+Bloom rotates the complete normalized model around its centered Y axis. No Blockbench animation timeline is required. See [ANIMATED_COSMETICS_GUIDE.md](ANIMATED_COSMETICS_GUIDE.md) for wing animation and additional speed recommendations.
 
 ### Publishing behavior
 
@@ -333,6 +343,7 @@ Two faces occupy the same position. Move one surface by `0.1–0.25` units or al
 - [ ] Negative Y offset creates the hovering gap
 - [ ] Title, slug, and collection are correct
 - [ ] Helmet behavior selected intentionally
+- [ ] Static or Spin animation selected intentionally
 - [ ] Tested in Fabric 1.21.11
 
 ## Official Blockbench references
@@ -341,4 +352,3 @@ Two faces occupy the same position. Move one surface by `0.1–0.25` units or al
 - [Blockbench overview, pivots, transforms, and UV tools](https://www.blockbench.net/wiki/guides/blockbench-overview-tips/)
 - [The `.bbmodel` format](https://www.blockbench.net/wiki/docs/bbmodel/)
 - [Minecraft modeling style guidance](https://www.blockbench.net/wiki/guides/minecraft-style-guide/)
-

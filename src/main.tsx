@@ -95,6 +95,7 @@ import {
   type WingAccountState,
   type WingCatalogItem,
 } from "./services/wings";
+import { activeColorway, type CosmeticColorway } from "./services/cosmetics";
 
 type Theme = "dark" | "oled" | "dusk";
 type SettingsState = {
@@ -1796,16 +1797,34 @@ const getCapeCardPreview = (key: string, textureDataUrl: string) => {
   return job;
 };
 
-function CapeTexturePreview({ cape }: { cape: CapeCatalogItem }) {
-  const cacheKey = `${CAPE_CARD_PREVIEW_VERSION}:${cape.id}:${cape.textureRevision}`;
+function CosmeticColorwaySwatches({ colorways, selectedId, onSelect }: { colorways: CosmeticColorway[]; selectedId: string | null; onSelect: (id: string) => void }) {
+  if (colorways.length < 2) return null;
+  return <div className="cosmetic-colorways" role="radiogroup" aria-label="Colorway">
+    {colorways.map((colorway) => <button
+      key={colorway.id}
+      type="button"
+      role="radio"
+      aria-checked={selectedId === colorway.id}
+      aria-label={colorway.name}
+      title={colorway.name}
+      className={selectedId === colorway.id ? "active" : ""}
+      style={{ "--colorway": colorway.color } as CSSProperties}
+      onClick={() => onSelect(colorway.id)}
+    />)}
+  </div>;
+}
+
+function CapeTexturePreview({ cape, colorway }: { cape: CapeCatalogItem; colorway?: CosmeticColorway | null }) {
+  const revision = colorway?.textureRevision || cape.textureRevision;
+  const cacheKey = `${CAPE_CARD_PREVIEW_VERSION}:${cape.id}:${colorway?.id || "base"}:${revision}`;
   const [previewUrl, setPreviewUrl] = useState(() => capeCardPreviewCache.get(cacheKey) || "");
 
   useEffect(() => {
     let disposed = false;
     const load = async () => {
       try {
-        const texture = await capeProvider.loadTextureData(cape.id);
-        const preview = await getCapeCardPreview(`${CAPE_CARD_PREVIEW_VERSION}:${cape.id}:${texture.revision}`, texture.dataUrl);
+        const texture = await capeProvider.loadTextureData(cape.id, colorway?.id);
+        const preview = await getCapeCardPreview(`${CAPE_CARD_PREVIEW_VERSION}:${cape.id}:${colorway?.id || "base"}:${texture.revision}`, texture.dataUrl);
         if (disposed) return;
         setPreviewUrl(preview);
       } catch {
@@ -1814,7 +1833,7 @@ function CapeTexturePreview({ cape }: { cape: CapeCatalogItem }) {
     };
     void load();
     return () => { disposed = true; };
-  }, [cacheKey, cape.id]);
+  }, [cacheKey, cape.id, colorway?.id]);
 
   return <div className="cape-texture-preview">
     {previewUrl ? <img className="cape-model-card-image" src={previewUrl} alt={`${cape.name} cape preview`} draggable={false} /> : <span className="cape-preview-loading"><Shirt size={30} /></span>}
@@ -1827,6 +1846,7 @@ function CapeCatalogCard({
   inCart,
   owned,
   equipped,
+  equippedColorwayId,
   onAdd,
   onEquip,
 }: {
@@ -1836,18 +1856,28 @@ function CapeCatalogCard({
   owned: boolean;
   equipped: boolean;
   onAdd: () => void;
-  onEquip: () => void;
+  equippedColorwayId: string | null;
+  onEquip: (colorwayId: string | null) => void;
 }) {
+  const initialColorway = activeColorway(cape, equipped ? equippedColorwayId : null);
+  const [selectedColorwayId, setSelectedColorwayId] = useState<string | null>(initialColorway?.id || null);
+  useEffect(() => {
+    const next = activeColorway(cape, equipped ? equippedColorwayId : selectedColorwayId);
+    if (next?.id !== selectedColorwayId) setSelectedColorwayId(next?.id || null);
+  }, [cape, equipped, equippedColorwayId]);
+  const selectedColorway = activeColorway(cape, selectedColorwayId);
+  const selectedIsEquipped = equipped && (!selectedColorway || selectedColorway.id === equippedColorwayId);
   return <article className={`cape-catalog-card ${equipped ? "equipped" : ""}`}>
-    <CapeTexturePreview cape={cape} />
+    <CapeTexturePreview cape={cape} colorway={selectedColorway} />
     <div className="cape-card-copy">
       <h3>{cape.name}</h3>
       <p>{cape.collection}</p>
+      <CosmeticColorwaySwatches colorways={cape.colorways} selectedId={selectedColorway?.id || null} onSelect={setSelectedColorwayId} />
     </div>
     {view === "shop" ? <button className={`cape-card-action ${owned ? "owned" : ""}`} disabled={inCart || owned} onClick={onAdd}>
       {owned ? <><Check size={16} strokeWidth={3.2} />Owned</> : inCart ? <><Check size={15} strokeWidth={3} />In cart</> : <><Plus size={16} strokeWidth={2.8} />Add to cart</>}
-    </button> : <button className={`cape-card-action ${equipped ? "active" : ""}`} onClick={onEquip}>
-      {equipped ? <><Check size={15} />Equipped</> : <><Shirt size={15} />Equip</>}
+    </button> : <button className={`cape-card-action ${selectedIsEquipped ? "active" : ""}`} onClick={() => onEquip(selectedColorway?.id || null)}>
+      {selectedIsEquipped ? <><Check size={15} />Equipped</> : <><Shirt size={15} />{equipped ? "Apply color" : "Equip"}</>}
     </button>}
   </article>;
 }
@@ -1937,38 +1967,48 @@ function CapeCartDrawer({
 
 const hatPreviewCache = new Map<string, string>();
 
-function HatTexturePreview({ hat }: { hat: HatCatalogItem }) {
-  const key = `${hat.id}:${hat.previewRevision}`;
+function HatTexturePreview({ hat, colorway }: { hat: HatCatalogItem; colorway?: CosmeticColorway | null }) {
+  const revision = colorway?.previewRevision || hat.previewRevision;
+  const key = `${hat.id}:${colorway?.id || "base"}:${revision}`;
   const [source, setSource] = useState(() => hatPreviewCache.get(key) || "");
   useEffect(() => {
     let disposed = false;
     if (source) return;
-    void hatProvider.loadPreviewData(hat.id).then((preview) => {
+    void hatProvider.loadPreviewData(hat.id, colorway?.id).then((preview) => {
       if (disposed) return;
-      hatPreviewCache.set(`${hat.id}:${preview.revision}`, preview.dataUrl);
+      hatPreviewCache.set(`${hat.id}:${colorway?.id || "base"}:${preview.revision}`, preview.dataUrl);
       hatPreviewCache.set(key, preview.dataUrl);
       setSource(preview.dataUrl);
     }).catch(() => { if (!disposed) setSource(""); });
     return () => { disposed = true; };
-  }, [hat.id, key, source]);
+  }, [hat.id, key, source, colorway?.id]);
   return <div className="cape-texture-preview hat-texture-preview">{source ? <img src={source} alt={`${hat.name} hat preview`} draggable={false} /> : <span className="cape-preview-loading"><Crown size={29} /></span>}</div>;
 }
 
-function HatCatalogCard({ hat, view, inCart, owned, equipped, onAdd, onEquip }: {
+function HatCatalogCard({ hat, view, inCart, owned, equipped, equippedColorwayId, onAdd, onEquip }: {
   hat: HatCatalogItem;
   view: CapeShopView;
   inCart: boolean;
   owned: boolean;
   equipped: boolean;
+  equippedColorwayId: string | null;
   onAdd: () => void;
-  onEquip: () => void;
+  onEquip: (colorwayId: string | null) => void;
 }) {
+  const initialColorway = activeColorway(hat, equipped ? equippedColorwayId : null);
+  const [selectedColorwayId, setSelectedColorwayId] = useState<string | null>(initialColorway?.id || null);
+  useEffect(() => {
+    const next = activeColorway(hat, equipped ? equippedColorwayId : selectedColorwayId);
+    if (next?.id !== selectedColorwayId) setSelectedColorwayId(next?.id || null);
+  }, [hat, equipped, equippedColorwayId]);
+  const selectedColorway = activeColorway(hat, selectedColorwayId);
+  const selectedIsEquipped = equipped && (!selectedColorway || selectedColorway.id === equippedColorwayId);
   return <article className={`cape-catalog-card ${equipped ? "equipped" : ""}`}>
-    <HatTexturePreview hat={hat} />
-    <div className="cape-card-copy"><h3>{hat.name}</h3><p>{hat.collection}</p></div>
+    <HatTexturePreview hat={hat} colorway={selectedColorway} />
+    <div className="cape-card-copy"><h3>{hat.name}</h3><p>{hat.collection}</p><CosmeticColorwaySwatches colorways={hat.colorways} selectedId={selectedColorway?.id || null} onSelect={setSelectedColorwayId} /></div>
     {view === "shop" ? <button className={`cape-card-action ${owned ? "owned" : ""}`} disabled={inCart || owned} onClick={onAdd}>
       {owned ? <><Check size={16} strokeWidth={3.2} />Owned</> : inCart ? <><Check size={15} strokeWidth={3} />In cart</> : <><Plus size={16} strokeWidth={2.8} />Add to cart</>}
-    </button> : <button className={`cape-card-action ${equipped ? "active" : ""}`} onClick={onEquip}>{equipped ? <><Check size={15} />Equipped</> : <><Crown size={15} />Equip</>}</button>}
+    </button> : <button className={`cape-card-action ${selectedIsEquipped ? "active" : ""}`} onClick={() => onEquip(selectedColorway?.id || null)}>{selectedIsEquipped ? <><Check size={15} />Equipped</> : <><Crown size={15} />{equipped ? "Apply color" : "Equip"}</>}</button>}
   </article>;
 }
 
@@ -2038,11 +2078,13 @@ function HatShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: s
     } catch (reason) { setStatus(String(reason)); }
     finally { setConfirming(false); window.setTimeout(() => setStatus(""), 2400); }
   };
-  const equip = async (id: string) => {
-    const next = accountState.equippedHatId === id ? null : id;
+  const equip = async (id: string, colorwayId: string | null) => {
+    const sameSelection = accountState.equippedHatId === id && accountState.equippedHatColorwayId === colorwayId;
+    const next = sameSelection ? null : id;
+    const nextColorway = sameSelection ? null : colorwayId;
     try {
-      await hatProvider.setEquipped(accountId, next);
-      persist({ ...accountState, equippedHatId: next });
+      await hatProvider.setEquipped(accountId, next, nextColorway);
+      persist({ ...accountState, equippedHatId: next, equippedHatColorwayId: nextColorway });
       setStatus(next ? "Hat equipped — the game updates live" : "Hat unequipped");
     } catch (reason) { setStatus(String(reason)); }
     window.setTimeout(() => setStatus(""), 2200);
@@ -2054,7 +2096,7 @@ function HatShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: s
     <section className="cape-shop-workspace">
       <aside className="cape-shop-categories"><button onClick={() => onSelectCategory("capes")}><Shirt size={17} />Capes</button><button className="active"><Crown size={17} />Hats</button><button onClick={() => onSelectCategory("wings")}><Feather size={17} />Wings</button><div><LockKeyhole size={15} /><span>More categories soon</span></div><article><ShoppingBag size={22} /><b>More cosmetics coming soon</b><span>New cosmetic types will join the collection later.</span></article></aside>
       <div className="cape-catalog-panel"><div className="cape-catalog-heading"><div><h2>{view === "shop" ? "Hat Collection" : "Your Hats"}</h2><p>{view === "shop" ? "All Bloom hats are free to add to your collection." : "Choose the hat shown live in Minecraft."}</p></div><span>{visible.length} {visible.length === 1 ? "hat" : "hats"}</span></div>
-        <div className="cape-catalog-grid">{pageItems.length ? pageItems.map((hat) => <HatCatalogCard key={hat.id} hat={hat} view={view} inCart={accountState.cartIds.includes(hat.id)} owned={accountState.collectionIds.includes(hat.id)} equipped={accountState.equippedHatId === hat.id} onAdd={() => addToCart(hat.id)} onEquip={() => void equip(hat.id)} />) : <div className="cape-catalog-empty">{loading ? <><span className="cape-loading-mark" /><h2>Preparing hats</h2><p>Checking Bloom's private 3D cosmetic catalog…</p></> : error ? <><TriangleAlert size={31} /><h2>Hat catalog unavailable</h2><p>{error}</p></> : view === "shop" ? <><Crown size={34} /><h2>Hats coming soon</h2><p>Publish the Blockbench benchmark in Bloom Cosmetics Manager to test this path.</p></> : <><ShoppingBag size={34} /><h2>Your hat collection is empty</h2><p>Add a free hat from the Shop.</p></>}</div>}</div>
+        <div className="cape-catalog-grid">{pageItems.length ? pageItems.map((hat) => <HatCatalogCard key={hat.id} hat={hat} view={view} inCart={accountState.cartIds.includes(hat.id)} owned={accountState.collectionIds.includes(hat.id)} equipped={accountState.equippedHatId === hat.id} equippedColorwayId={accountState.equippedHatColorwayId} onAdd={() => addToCart(hat.id)} onEquip={(colorwayId) => void equip(hat.id, colorwayId)} />) : <div className="cape-catalog-empty">{loading ? <><span className="cape-loading-mark" /><h2>Preparing hats</h2><p>Checking Bloom's private 3D cosmetic catalog…</p></> : error ? <><TriangleAlert size={31} /><h2>Hat catalog unavailable</h2><p>{error}</p></> : view === "shop" ? <><Crown size={34} /><h2>Hats coming soon</h2><p>Publish the Blockbench benchmark in Bloom Cosmetics Manager to test this path.</p></> : <><ShoppingBag size={34} /><h2>Your hat collection is empty</h2><p>Add a free hat from the Shop.</p></>}</div>}</div>
         {pageCount > 1 && <div className="cape-catalog-pages"><button disabled={page === 1} onClick={() => setPage((value) => value - 1)}>Previous</button><span>Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setPage((value) => value + 1)}>Next</button></div>}
       </div>
     </section>
@@ -2065,38 +2107,48 @@ function HatShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: s
 
 const wingPreviewCache = new Map<string, string>();
 
-function WingTexturePreview({ wing }: { wing: WingCatalogItem }) {
-  const key = `${wing.id}:${wing.previewRevision}`;
+function WingTexturePreview({ wing, colorway }: { wing: WingCatalogItem; colorway?: CosmeticColorway | null }) {
+  const revision = colorway?.previewRevision || wing.previewRevision;
+  const key = `${wing.id}:${colorway?.id || "base"}:${revision}`;
   const [source, setSource] = useState(() => wingPreviewCache.get(key) || "");
   useEffect(() => {
     let disposed = false;
     if (source) return;
-    void wingProvider.loadPreviewData(wing.id).then((preview) => {
+    void wingProvider.loadPreviewData(wing.id, colorway?.id).then((preview) => {
       if (disposed) return;
-      wingPreviewCache.set(`${wing.id}:${preview.revision}`, preview.dataUrl);
+      wingPreviewCache.set(`${wing.id}:${colorway?.id || "base"}:${preview.revision}`, preview.dataUrl);
       wingPreviewCache.set(key, preview.dataUrl);
       setSource(preview.dataUrl);
     }).catch(() => { if (!disposed) setSource(""); });
     return () => { disposed = true; };
-  }, [key, source, wing.id]);
+  }, [key, source, wing.id, colorway?.id]);
   return <div className="cape-texture-preview hat-texture-preview wing-texture-preview">{source ? <img src={source} alt={`${wing.name} wing preview`} draggable={false} /> : <span className="cape-preview-loading"><Feather size={29} /></span>}</div>;
 }
 
-function WingCatalogCard({ wing, view, inCart, owned, equipped, onAdd, onEquip }: {
+function WingCatalogCard({ wing, view, inCart, owned, equipped, equippedColorwayId, onAdd, onEquip }: {
   wing: WingCatalogItem;
   view: CapeShopView;
   inCart: boolean;
   owned: boolean;
   equipped: boolean;
+  equippedColorwayId: string | null;
   onAdd: () => void;
-  onEquip: () => void;
+  onEquip: (colorwayId: string | null) => void;
 }) {
+  const initialColorway = activeColorway(wing, equipped ? equippedColorwayId : null);
+  const [selectedColorwayId, setSelectedColorwayId] = useState<string | null>(initialColorway?.id || null);
+  useEffect(() => {
+    const next = activeColorway(wing, equipped ? equippedColorwayId : selectedColorwayId);
+    if (next?.id !== selectedColorwayId) setSelectedColorwayId(next?.id || null);
+  }, [wing, equipped, equippedColorwayId]);
+  const selectedColorway = activeColorway(wing, selectedColorwayId);
+  const selectedIsEquipped = equipped && (!selectedColorway || selectedColorway.id === equippedColorwayId);
   return <article className={`cape-catalog-card ${equipped ? "equipped" : ""}`}>
-    <WingTexturePreview wing={wing} />
-    <div className="cape-card-copy"><h3>{wing.name}</h3><p>{wing.collection}</p></div>
+    <WingTexturePreview wing={wing} colorway={selectedColorway} />
+    <div className="cape-card-copy"><h3>{wing.name}</h3><p>{wing.collection}</p><CosmeticColorwaySwatches colorways={wing.colorways} selectedId={selectedColorway?.id || null} onSelect={setSelectedColorwayId} /></div>
     {view === "shop" ? <button className={`cape-card-action ${owned ? "owned" : ""}`} disabled={inCart || owned} onClick={onAdd}>
       {owned ? <><Check size={16} strokeWidth={3.2} />Owned</> : inCart ? <><Check size={15} strokeWidth={3} />In cart</> : <><Plus size={16} strokeWidth={2.8} />Add to cart</>}
-    </button> : <button className={`cape-card-action ${equipped ? "active" : ""}`} onClick={onEquip}>{equipped ? <><Check size={15} />Equipped</> : <><Feather size={15} />Equip</>}</button>}
+    </button> : <button className={`cape-card-action ${selectedIsEquipped ? "active" : ""}`} onClick={() => onEquip(selectedColorway?.id || null)}>{selectedIsEquipped ? <><Check size={15} />Equipped</> : <><Feather size={15} />{equipped ? "Apply color" : "Equip"}</>}</button>}
   </article>;
 }
 
@@ -2166,11 +2218,13 @@ function WingShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: 
     } catch (reason) { setStatus(String(reason)); }
     finally { setConfirming(false); window.setTimeout(() => setStatus(""), 2400); }
   };
-  const equip = async (id: string) => {
-    const next = accountState.equippedWingId === id ? null : id;
+  const equip = async (id: string, colorwayId: string | null) => {
+    const sameSelection = accountState.equippedWingId === id && accountState.equippedWingColorwayId === colorwayId;
+    const next = sameSelection ? null : id;
+    const nextColorway = sameSelection ? null : colorwayId;
     try {
-      await wingProvider.setEquipped(accountId, next);
-      persist({ ...accountState, equippedWingId: next });
+      await wingProvider.setEquipped(accountId, next, nextColorway);
+      persist({ ...accountState, equippedWingId: next, equippedWingColorwayId: nextColorway });
       setStatus(next ? "Wings equipped — the game updates live" : "Wings unequipped");
     } catch (reason) { setStatus(String(reason)); }
     window.setTimeout(() => setStatus(""), 2200);
@@ -2182,7 +2236,7 @@ function WingShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: 
     <section className="cape-shop-workspace">
       <aside className="cape-shop-categories"><button onClick={() => onSelectCategory("capes")}><Shirt size={17} />Capes</button><button onClick={() => onSelectCategory("hats")}><Crown size={17} />Hats</button><button className="active"><Feather size={17} />Wings</button><div><LockKeyhole size={15} /><span>More categories soon</span></div><article><ShoppingBag size={22} /><b>More cosmetics coming soon</b><span>New cosmetic types will join the collection later.</span></article></aside>
       <div className="cape-catalog-panel"><div className="cape-catalog-heading"><div><h2>{view === "shop" ? "Wing Collection" : "Your Wings"}</h2><p>{view === "shop" ? "All Bloom wings are free to add to your collection." : "Choose the wings shown live in Minecraft."}</p></div><span>{visible.length} {visible.length === 1 ? "wing" : "wings"}</span></div>
-        <div className="cape-catalog-grid">{pageItems.length ? pageItems.map((wing) => <WingCatalogCard key={wing.id} wing={wing} view={view} inCart={accountState.cartIds.includes(wing.id)} owned={accountState.collectionIds.includes(wing.id)} equipped={accountState.equippedWingId === wing.id} onAdd={() => addToCart(wing.id)} onEquip={() => void equip(wing.id)} />) : <div className="cape-catalog-empty">{loading ? <><span className="cape-loading-mark" /><h2>Preparing wings</h2><p>Checking Bloom's private 3D cosmetic catalog…</p></> : error ? <><TriangleAlert size={31} /><h2>Wing catalog unavailable</h2><p>{error}</p></> : view === "shop" ? <><Feather size={34} /><h2>Wings coming soon</h2><p>Publish the first model in Bloom Cosmetics Manager to test this path.</p></> : <><ShoppingBag size={34} /><h2>Your wing collection is empty</h2><p>Add free wings from the Shop.</p></>}</div>}</div>
+        <div className="cape-catalog-grid">{pageItems.length ? pageItems.map((wing) => <WingCatalogCard key={wing.id} wing={wing} view={view} inCart={accountState.cartIds.includes(wing.id)} owned={accountState.collectionIds.includes(wing.id)} equipped={accountState.equippedWingId === wing.id} equippedColorwayId={accountState.equippedWingColorwayId} onAdd={() => addToCart(wing.id)} onEquip={(colorwayId) => void equip(wing.id, colorwayId)} />) : <div className="cape-catalog-empty">{loading ? <><span className="cape-loading-mark" /><h2>Preparing wings</h2><p>Checking Bloom's private 3D cosmetic catalog…</p></> : error ? <><TriangleAlert size={31} /><h2>Wing catalog unavailable</h2><p>{error}</p></> : view === "shop" ? <><Feather size={34} /><h2>Wings coming soon</h2><p>Publish the first model in Bloom Cosmetics Manager to test this path.</p></> : <><ShoppingBag size={34} /><h2>Your wing collection is empty</h2><p>Add free wings from the Shop.</p></>}</div>}</div>
         {pageCount > 1 && <div className="cape-catalog-pages"><button disabled={page === 1} onClick={() => setPage((value) => value - 1)}>Previous</button><span>Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setPage((value) => value + 1)}>Next</button></div>}
       </div>
     </section>
@@ -2290,11 +2344,13 @@ function CapeShopPage({ accountId, adsVisible }: { accountId: string | null; ads
     }
   };
 
-  const equipCape = async (capeId: string) => {
-    const nextId = accountState.equippedCapeId === capeId ? null : capeId;
+  const equipCape = async (capeId: string, colorwayId: string | null) => {
+    const sameSelection = accountState.equippedCapeId === capeId && accountState.equippedCapeColorwayId === colorwayId;
+    const nextId = sameSelection ? null : capeId;
+    const nextColorwayId = sameSelection ? null : colorwayId;
     try {
-      await capeProvider.setEquippedCape(accountId, nextId);
-      persist({ ...accountState, equippedCapeId: nextId });
+      await capeProvider.setEquippedCape(accountId, nextId, nextColorwayId);
+      persist({ ...accountState, equippedCapeId: nextId, equippedCapeColorwayId: nextColorwayId });
       setStatus(nextId ? "Cape equipped" : "Cape unequipped");
       window.setTimeout(() => setStatus(""), 1800);
     } catch (error) {
@@ -2347,8 +2403,9 @@ function CapeShopPage({ accountId, adsVisible }: { accountId: string | null; ads
             inCart={accountState.cartIds.includes(cape.id)}
             owned={accountState.collectionIds.includes(cape.id)}
             equipped={accountState.equippedCapeId === cape.id}
+            equippedColorwayId={accountState.equippedCapeColorwayId}
             onAdd={() => addToCart(cape.id)}
-            onEquip={() => void equipCape(cape.id)}
+            onEquip={(colorwayId) => void equipCape(cape.id, colorwayId)}
           />) : <div className="cape-catalog-empty">
             {loading ? <><span className="cape-loading-mark" /><h2>Preparing the collection</h2><p>Checking Bloom's secure cape catalog…</p></> : catalogError ? <><TriangleAlert size={31} /><h2>Catalog unavailable</h2><p>{catalogError}</p></> : view === "shop" ? <><Shirt size={34} /><h2>Capes coming soon</h2><p>The first free Bloom capes will appear here.</p></> : <><ShoppingBag size={34} /><h2>Your collection is empty</h2><p>Add free capes from the Shop when the collection arrives.</p></>}
           </div>}

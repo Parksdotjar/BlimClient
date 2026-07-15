@@ -117,7 +117,8 @@ public final class BloomCapeService {
                     UUID uuid = parseUuid(item.get("uuid").getAsString());
                     remote.put(uuid, new RemoteCape(
                         item.get("capeId").getAsString(),
-                        item.get("textureRevision").getAsString()
+                        item.get("textureRevision").getAsString(),
+                        item.has("textureUrl") ? item.get("textureUrl").getAsString() : null
                     ));
                 }
             }
@@ -154,6 +155,16 @@ public final class BloomCapeService {
     }
 
     private CompletableFuture<Identifier> requestTexture(RemoteCape cape) {
+        if (cape.textureUrl != null && !cape.textureUrl.isBlank()) {
+            HttpRequest textureRequest = HttpRequest.newBuilder(URI.create(cape.textureUrl))
+                .timeout(Duration.ofSeconds(8))
+                .header("Accept", "image/png")
+                .header("User-Agent", "Bloom-Cosmetics/1.3.0")
+                .GET()
+                .build();
+            return client.sendAsync(textureRequest, HttpResponse.BodyHandlers.ofByteArray())
+                .thenCompose(response -> decodeTextureResponse(cape, response));
+        }
         String leaseUrl = API + "/v1/capes/" + URLEncoder.encode(cape.capeId, StandardCharsets.UTF_8) + "/texture";
         HttpRequest leaseRequest = HttpRequest.newBuilder(URI.create(leaseUrl))
             .timeout(Duration.ofSeconds(5))
@@ -175,21 +186,23 @@ public final class BloomCapeService {
                     .build();
                 return client.sendAsync(textureRequest, HttpResponse.BodyHandlers.ofByteArray());
             })
-            .thenCompose(response -> {
-                if (response.statusCode() != 200 || response.body().length > 8 * 1024 * 1024) {
-                    return CompletableFuture.failedFuture(new IllegalStateException("Cape texture unavailable"));
-                }
-                try {
-                    NativeImage image = NativeImage.read(response.body());
-                    if (image.getWidth() != image.getHeight() * 2 || image.getWidth() < 64 || image.getWidth() > 2048) {
-                        image.close();
-                        return CompletableFuture.failedFuture(new IllegalStateException("Invalid cape dimensions"));
-                    }
-                    return registerTexture(cape, image);
-                } catch (Exception error) {
-                    return CompletableFuture.failedFuture(error);
-                }
-            });
+            .thenCompose(response -> decodeTextureResponse(cape, response));
+    }
+
+    private CompletableFuture<Identifier> decodeTextureResponse(RemoteCape cape, HttpResponse<byte[]> response) {
+        if (response.statusCode() != 200 || response.body().length > 8 * 1024 * 1024) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Cape texture unavailable"));
+        }
+        try {
+            NativeImage image = NativeImage.read(response.body());
+            if (image.getWidth() != image.getHeight() * 2 || image.getWidth() < 64 || image.getWidth() > 2048) {
+                image.close();
+                return CompletableFuture.failedFuture(new IllegalStateException("Invalid cape dimensions"));
+            }
+            return registerTexture(cape, image);
+        } catch (Exception error) {
+            return CompletableFuture.failedFuture(error);
+        }
     }
 
     private CompletableFuture<Identifier> registerTexture(RemoteCape cape, NativeImage image) {
@@ -220,7 +233,7 @@ public final class BloomCapeService {
         return UUID.fromString(compact.substring(0, 8) + "-" + compact.substring(8, 12) + "-" + compact.substring(12, 16) + "-" + compact.substring(16, 20) + "-" + compact.substring(20));
     }
 
-    private record RemoteCape(String capeId, String revision) {}
+    private record RemoteCape(String capeId, String revision, String textureUrl) {}
 
     private static final class CapeAssignment {
         private final String assetKey;

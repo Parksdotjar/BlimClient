@@ -1,3 +1,6 @@
+import { invoke } from "@tauri-apps/api/core";
+import type { CosmeticColorway } from "./cosmetics";
+
 export type CapeTexturePurpose = "card" | "detail" | "game";
 
 export type CapeCatalogItem = {
@@ -5,6 +8,7 @@ export type CapeCatalogItem = {
   name: string;
   collection: string;
   textureRevision: string;
+  colorways: CosmeticColorway[];
 };
 
 export type CapeTextureLease = {
@@ -22,14 +26,15 @@ export type CapeAccountState = {
   cartIds: string[];
   collectionIds: string[];
   equippedCapeId: string | null;
+  equippedCapeColorwayId: string | null;
 };
 
 export interface CapeProvider {
   listCatalog(accountId: string | null): Promise<CapeCatalogItem[]>;
-  leaseTexture(capeId: string, purpose: CapeTexturePurpose): Promise<CapeTextureLease>;
-  loadTextureData(capeId: string): Promise<CapeTextureData>;
+  leaseTexture(capeId: string, purpose: CapeTexturePurpose, colorwayId?: string | null): Promise<CapeTextureLease>;
+  loadTextureData(capeId: string, colorwayId?: string | null): Promise<CapeTextureData>;
   addToCollection(accountId: string | null, capeIds: string[]): Promise<void>;
-  setEquippedCape(accountId: string | null, capeId: string | null): Promise<void>;
+  setEquippedCape(accountId: string | null, capeId: string | null, colorwayId?: string | null): Promise<void>;
 }
 
 type CapeStorageDocument = {
@@ -59,6 +64,7 @@ export const emptyCapeAccountState = (): CapeAccountState => ({
   cartIds: [],
   collectionIds: [],
   equippedCapeId: null,
+  equippedCapeColorwayId: null,
 });
 
 const storageAccountId = (accountId: string | null) => accountId?.trim() || "local-guest";
@@ -75,7 +81,8 @@ const normalizeState = (value: unknown): CapeAccountState => {
   const equippedCapeId = typeof candidate.equippedCapeId === "string" && collectionIds.includes(candidate.equippedCapeId)
     ? candidate.equippedCapeId
     : null;
-  return { cartIds, collectionIds, equippedCapeId };
+  const equippedCapeColorwayId = equippedCapeId && typeof candidate.equippedCapeColorwayId === "string" ? candidate.equippedCapeColorwayId : null;
+  return { cartIds, collectionIds, equippedCapeId, equippedCapeColorwayId };
 };
 
 const readDocument = (): CapeStorageDocument => {
@@ -126,12 +133,13 @@ class BloomCapeProvider implements CapeProvider {
     return capeCatalogRequest;
   }
 
-  async leaseTexture(capeId: string, _purpose: CapeTexturePurpose): Promise<CapeTextureLease> {
+  async leaseTexture(capeId: string, _purpose: CapeTexturePurpose, colorwayId?: string | null): Promise<CapeTextureLease> {
     try {
-      return await invoke<CapeTextureLease>("lease_bloom_cape_texture", { capeId });
+      return await invoke<CapeTextureLease>("lease_bloom_cape_texture", { capeId, colorwayId: colorwayId || null });
     } catch (nativeError) {
       try {
-        const response = await fetch(`${CAPE_API_URL}/v1/capes/${encodeURIComponent(capeId)}/texture`, { cache: "no-store" });
+        const path = colorwayId ? `/v1/capes/${encodeURIComponent(capeId)}/colorways/${encodeURIComponent(colorwayId)}/texture` : `/v1/capes/${encodeURIComponent(capeId)}/texture`;
+        const response = await fetch(`${CAPE_API_URL}${path}`, { cache: "no-store" });
         return await responseJson<CapeTextureLease>(response, "Bloom's cape texture lease");
       } catch {
         throw nativeError;
@@ -139,12 +147,12 @@ class BloomCapeProvider implements CapeProvider {
     }
   }
 
-  async loadTextureData(capeId: string): Promise<CapeTextureData> {
+  async loadTextureData(capeId: string, colorwayId?: string | null): Promise<CapeTextureData> {
     try {
-      return await invoke<CapeTextureData>("load_bloom_cape_texture_data", { capeId });
+      return await invoke<CapeTextureData>("load_bloom_cape_texture_data", { capeId, colorwayId: colorwayId || null });
     } catch (nativeError) {
       try {
-        const lease = await this.leaseTexture(capeId, "card");
+        const lease = await this.leaseTexture(capeId, "card", colorwayId);
         const response = await fetch(lease.url, { cache: "no-store" });
         if (!response.ok) throw new Error(`Bloom's cape texture returned HTTP ${response.status}.`);
         return { dataUrl: await blobDataUrl(await response.blob()), revision: lease.revision };
@@ -158,10 +166,9 @@ class BloomCapeProvider implements CapeProvider {
     // Local-only until the authenticated Supabase collection adapter is connected.
   }
 
-  async setEquippedCape(_accountId: string | null, capeId: string | null): Promise<void> {
-    await invoke("set_bloom_equipped_cape", { capeId });
+  async setEquippedCape(_accountId: string | null, capeId: string | null, colorwayId?: string | null): Promise<void> {
+    await invoke("set_bloom_equipped_cape", { capeId, colorwayId: colorwayId || null });
   }
 }
 
 export const capeProvider: CapeProvider = new BloomCapeProvider();
-import { invoke } from "@tauri-apps/api/core";

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { CosmeticColorway } from "./cosmetics";
 
 export type WingCatalogItem = {
   id: string;
@@ -10,6 +11,7 @@ export type WingCatalogItem = {
   offset: [number, number, number];
   scale: number;
   hideCape: boolean;
+  colorways: CosmeticColorway[];
 };
 
 export type WingPreviewData = { dataUrl: string; revision: string };
@@ -18,15 +20,16 @@ export type WingAccountState = {
   cartIds: string[];
   collectionIds: string[];
   equippedWingId: string | null;
+  equippedWingColorwayId: string | null;
 };
 
-type RemoteWingAccountState = { collectionIds: string[]; equippedWingId: string | null };
+type RemoteWingAccountState = { collectionIds: string[]; equippedWingId: string | null; equippedWingColorwayId: string | null };
 type WingStorageDocument = { schemaVersion: 1; accounts: Record<string, WingAccountState> };
 
 const STORAGE_KEY = "bloom-wings-v1";
 const CATALOG_CACHE_MS = 15_000;
 const ACCOUNT_CACHE_MS = 30_000;
-const emptyState = (): WingAccountState => ({ cartIds: [], collectionIds: [], equippedWingId: null });
+const emptyState = (): WingAccountState => ({ cartIds: [], collectionIds: [], equippedWingId: null, equippedWingColorwayId: null });
 const accountKey = (accountId: string | null) => accountId?.replaceAll("-", "").toLowerCase() || "signed-out";
 let catalogCache: { expiresAt: number; items: WingCatalogItem[] } | null = null;
 let catalogRequest: Promise<WingCatalogItem[]> | null = null;
@@ -45,7 +48,8 @@ const sanitize = (value: Partial<WingAccountState> | undefined): WingAccountStat
   const collectionIds = Array.isArray(value?.collectionIds) ? [...new Set(value.collectionIds.filter((id): id is string => typeof id === "string"))] : [];
   const cartIds = Array.isArray(value?.cartIds) ? [...new Set(value.cartIds.filter((id): id is string => typeof id === "string" && !collectionIds.includes(id)))] : [];
   const equippedWingId = typeof value?.equippedWingId === "string" && collectionIds.includes(value.equippedWingId) ? value.equippedWingId : null;
-  return { cartIds, collectionIds, equippedWingId };
+  const equippedWingColorwayId = equippedWingId && typeof value?.equippedWingColorwayId === "string" ? value.equippedWingColorwayId : null;
+  return { cartIds, collectionIds, equippedWingId, equippedWingColorwayId };
 };
 
 export const loadWingAccountState = (accountId: string | null) => sanitize(readDocument().accounts[accountKey(accountId)] || emptyState());
@@ -81,7 +85,7 @@ const loadAccountState = (accountId: string | null) => {
   const active = accountRequests.get(key);
   if (active) return active;
   const request = invoke<RemoteWingAccountState>("get_bloom_wing_account_state")
-    .then((remote) => saveWingAccountState(accountId, { ...local, collectionIds: remote.collectionIds, equippedWingId: remote.equippedWingId }))
+    .then((remote) => saveWingAccountState(accountId, { ...local, collectionIds: remote.collectionIds, equippedWingId: remote.equippedWingId, equippedWingColorwayId: remote.equippedWingColorwayId }))
     .catch((error) => {
       if (cached || local.collectionIds.length || local.equippedWingId) return local;
       throw error;
@@ -93,8 +97,8 @@ const loadAccountState = (accountId: string | null) => {
 
 export const wingProvider = {
   listCatalog,
-  loadPreviewData: (wingId: string) => invoke<WingPreviewData>("load_bloom_wing_preview_data", { wingId }),
+  loadPreviewData: (wingId: string, colorwayId?: string | null) => invoke<WingPreviewData>("load_bloom_wing_preview_data", { wingId, colorwayId: colorwayId || null }),
   loadAccountState,
   addToCollection: (_accountId: string | null, wingIds: string[]) => invoke<void>("add_bloom_wings_to_collection", { wingIds }),
-  setEquipped: (_accountId: string | null, wingId: string | null) => invoke<void>("set_bloom_equipped_wing", { wingId }),
+  setEquipped: (_accountId: string | null, wingId: string | null, colorwayId?: string | null) => invoke<void>("set_bloom_equipped_wing", { wingId, colorwayId: colorwayId || null }),
 };

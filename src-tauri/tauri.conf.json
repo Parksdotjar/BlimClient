@@ -4,7 +4,7 @@
   "version": "1.0.9",
   "identifier": "dev.bloomclient.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run build:cosmetics && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build:tauri",
     "frontendDist": "../dist"
