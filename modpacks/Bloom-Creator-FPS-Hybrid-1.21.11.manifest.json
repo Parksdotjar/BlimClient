@@ -1,0 +1,284 @@
+{
+  "name": "Bloom Creator FPS Hybrid",
+  "version": "1.0.0+1.21.11",
+  "minecraft": "1.21.11",
+  "fabricLoader": "0.19.3",
+  "base": {
+    "name": "Fabulously Optimized",
+    "version": "12.2.2",
+    "versionId": "tC7NXu6R"
+  },
+  "totalManifestFiles": 76,
+  "additions": [
+    {
+      "title": "Essential Mod",
+      "slug": "essential",
+      "projectId": "k2ZPuTBm",
+      "version": "1.4.1",
+      "versionId": "DO2E4PzC",
+      "group": "Social and multiplayer",
+      "status": "added",
+      "url": "https://modrinth.com/mod/essential"
+    },
+    {
+      "title": "uku's Armor HUD",
+      "slug": "ukus-armor-hud",
+      "projectId": "wF189hn9",
+      "version": "0.10.2+mc1.21.11",
+      "versionId": "ZDZWmIsH",
+      "group": "PvP HUD",
+      "status": "added",
+      "url": "https://modrinth.com/mod/ukus-armor-hud"
+    },
+    {
+      "title": "Flashback",
+      "slug": "flashback",
+      "projectId": "4das1Fjq",
+      "version": "0.39.5",
+      "versionId": "AGkqd25Y",
+      "group": "Creator tools",
+      "status": "added",
+      "url": "https://modrinth.com/mod/flashback"
+    },
+    {
+      "title": "Simple Voice Chat",
+      "slug": "simple-voice-chat",
+      "projectId": "9eGKb6K1",
+      "version": "fabric-1.21.11-2.6.20",
+      "versionId": "tiSyltLv",
+      "group": "Social and multiplayer",
+      "status": "added",
+      "url": "https://modrinth.com/mod/simple-voice-chat"
+    },
+    {
+      "title": "Nvidium",
+      "slug": "nvidium",
+      "projectId": "SfMw2IZN",
+      "version": "0.4.3-beta13-1.21.11",
+      "versionId": "4x9ci9sF",
+      "group": "Performance (NVIDIA only)",
+      "status": "added",
+      "url": "https://modrinth.com/mod/nvidium"
+    },
+    {
+      "title": "BadOptimizations",
+      "slug": "badoptimizations",
+      "projectId": "g96Z4WVZ",
+      "version": "2.4.1",
+      "versionId": "Q3Dusz2j",
+      "group": "Performance",
+      "status": "added",
+      "url": "https://modrinth.com/mod/badoptimizations"
+    },
+    {
+      "title": "ThreadTweak",
+      "slug": "threadtweak",
+      "projectId": "vSEH1ERy",
+      "version": "0.1.8",
+      "versionId": "9t60vZ1h",
+      "group": "Performance",
+      "status": "added",
+      "url": "https://modrinth.com/mod/threadtweak"
+    },
+    {
+      "title": "Krypton",
+      "slug": "krypton",
+      "projectId": "fQEb0iXm",
+      "version": "0.2.10",
+      "versionId": "O9LmWYR7",
+      "group": "Performance",
+      "status": "added",
+      "url": "https://modrinth.com/mod/krypton"
+    },
+    {
+      "title": "Particle Core",
+      "slug": "particle-core",
+      "projectId": "RSeLon5O",
+      "version": "0.3.2+1.21.11",
+      "versionId": "kIlv5noY",
+      "group": "Performance",
+      "status": "added",
+      "url": "https://modrinth.com/mod/particle-core"
+    },
+    {
+      "title": "Fast IP Ping",
+      "slug": "fast-ip-ping",
+      "projectId": "9mtu0sUO",
+      "version": "v1.0.11-mc1.21.11-fabric",
+      "versionId": "E3Ei5xUe",
+      "group": "Performance",
+      "status": "added",
+      "url": "https://modrinth.com/mod/fast-ip-ping"
+    },
+    {
+      "title": "Freecam",
+      "slug": "freecam",
+      "projectId": "XeEZ3fK2",
+      "version": "1.4.0",
+      "versionId": "zjfNOY3S",
+      "group": "Creator tools",
+      "status": "added",
+      "url": "https://modrinth.com/mod/freecam"
+    },
+    {
+      "title": "Camera Utils",
+      "slug": "camera-utils",
+      "projectId": "rrwQMaWQ",
+      "version": "fabric-1.21.11-1.1.2",
+      "versionId": "iTsiAfu8",
+      "group": "Creator tools",
+      "status": "added",
+      "url": "https://modrinth.com/mod/camera-utils"
+    },
+    {
+      "title": "Shulker Box Tooltip",
+      "slug": "shulkerboxtooltip",
+      "projectId": "2M01OLQq",
+      "version": "5.2.16+1.21.11-fabric",
+      "versionId": "rZovgkWT",
+      "group": "Quality of life",
+      "status": "added",
+      "url": "https://modrinth.com/mod/shulkerboxtooltip"
+    },
+    {
+      "title": "Chat Heads",
+      "slug": "chat-heads",
+      "projectId": "Wb5oqrBJ",
+      "version": "1.2.4",
+      "versionId": "dL4IyVTy",
+      "group": "Quality of life",
+      "status": "added",
+      "url": "https://modrinth.com/mod/chat-heads"
+    },
+    {
+      "title": "AppleSkin",
+      "slug": "appleskin",
+      "projectId": "EsAfCjCV",
+      "version": "3.0.8+mc1.21.11",
+      "versionId": "59ti1rvg",
+      "group": "Quality of life",
+      "status": "added",
+      "url": "https://modrinth.com/mod/appleskin"
+    },
+    {
+      "title": "Mouse Tweaks",
+      "slug": "mouse-tweaks",
+      "projectId": "aC3cM3Vq",
+      "version": "1.21.11-2.30-fabric",
+      "versionId": "i1duwnJl",
+      "group": "Quality of life",
+      "status": "added",
+      "url": "https://modrinth.com/mod/mouse-tweaks"
+    },
+    {
+      "title": "BetterF3",
+      "slug": "betterf3",
+      "projectId": "8shC1gFX",
+      "version": "17.0.0",
+      "versionId": "Qw1nhj7u",
+      "group": "Creator tools",
+      "status": "added",
+      "url": "https://modrinth.com/mod/betterf3"
+    },
+    {
+      "title": "TotemCounter",
+      "slug": "totemcounter",
+      "projectId": "T9R7YTnA",
+      "version": "1.11.2+mc1.21.11",
+      "versionId": "eRAPu7Ge",
+      "group": "PvP HUD",
+      "status": "added",
+      "url": "https://modrinth.com/mod/totemcounter"
+    },
+    {
+      "title": "PotionCounter",
+      "slug": "potioncounter",
+      "projectId": "JzdjByS4",
+      "version": "1.10.0+mc1.21.11",
+      "versionId": "CGQnALrf",
+      "group": "PvP HUD",
+      "status": "added",
+      "url": "https://modrinth.com/mod/potioncounter"
+    },
+    {
+      "title": "BetterShields",
+      "slug": "bettershields",
+      "projectId": "UpdayxEt",
+      "version": "1.9.2+mc1.21.11",
+      "versionId": "jq3TIvdv",
+      "group": "PvP HUD",
+      "status": "added",
+      "url": "https://modrinth.com/mod/bettershields"
+    },
+    {
+      "title": "Low Fire",
+      "slug": "low-fire-pack",
+      "projectId": "1jZGHJ05",
+      "version": "1.3.0",
+      "versionId": "RP4ozzMC",
+      "group": "PvP resource packs",
+      "status": "added",
+      "url": "https://modrinth.com/resourcepack/low-fire-pack"
+    },
+    {
+      "title": "Low Shield",
+      "slug": "low-shield-pack",
+      "projectId": "CZrLuVQo",
+      "version": "3.1.0",
+      "versionId": "4LeYKTYX",
+      "group": "PvP resource packs",
+      "status": "added",
+      "url": "https://modrinth.com/resourcepack/low-shield-pack"
+    },
+    {
+      "title": "Short Swords",
+      "slug": "short-swords-pack",
+      "projectId": "GExZOLXP",
+      "version": "1.2.0",
+      "versionId": "gmCGV0CM",
+      "group": "PvP resource packs",
+      "status": "added",
+      "url": "https://modrinth.com/resourcepack/short-swords-pack"
+    },
+    {
+      "title": "Fresh Animations",
+      "slug": "fresh-animations",
+      "projectId": "50dA9Sha",
+      "version": "1.10.4",
+      "versionId": "xN57JJts",
+      "group": "Creator resource packs",
+      "status": "added",
+      "url": "https://modrinth.com/resourcepack/fresh-animations"
+    },
+    {
+      "title": "Fullbright UB",
+      "slug": "fullbright-ub",
+      "projectId": "ItHr72Fy",
+      "version": "6.0",
+      "versionId": "bjc4gBmv",
+      "group": "Utility resource packs",
+      "status": "added",
+      "url": "https://modrinth.com/resourcepack/fullbright-ub"
+    },
+    {
+      "title": "ukulib",
+      "slug": "ukulib",
+      "projectId": "Y8uFrUil",
+      "version": "1.10.2+1.21.11",
+      "versionId": "t9ZJ7RPT",
+      "group": "Required by uku's Armor HUD",
+      "status": "dependency",
+      "url": "https://modrinth.com/mod/ukulib"
+    },
+    {
+      "title": "Fzzy Config",
+      "slug": "fzzy-config",
+      "projectId": "hYykXjDp",
+      "version": "0.7.6+1.21.11",
+      "versionId": "nSB6xGOS",
+      "group": "Required by Particle Core",
+      "status": "dependency",
+      "url": "https://modrinth.com/mod/fzzy-config"
+    }
+  ]
+}

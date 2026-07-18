@@ -64,7 +64,8 @@ export const saveHatAccountState = (accountId: string | null, state: HatAccountS
   return next;
 };
 
-const listCatalog = () => {
+const listCatalog = (force = false) => {
+  if (force) catalogCache = null;
   if (catalogCache && catalogCache.expiresAt > Date.now()) return Promise.resolve(catalogCache.items);
   if (catalogRequest) return catalogRequest;
   catalogRequest = invoke<HatCatalogItem[]>("list_bloom_hats")

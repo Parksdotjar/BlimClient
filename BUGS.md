@@ -192,3 +192,18 @@ Use the next ID and record the same fields every time:
 5. Fix
 6. Verification command or result
 7. Any tempting workaround that should not be repeated
+# Hat collection can return `hat_not_found`
+
+- **Symptom:** Adding a hat can fail with `404 Not Found: {"error":"hat_not_found"}`.
+- **Cause:** A locally saved cart may contain the previous database ID of a hat that was deleted and republished.
+- **Fix:** Reconcile cart IDs with the live catalog before display. If the catalog changes between browsing and confirmation, refresh once, remap the selection by stable name and collection, retry, or remove the unavailable entry with a readable message.
+
+## BLOOM-020 — Sidebar download badge became stuck at 99
+
+- **Status:** Fixed
+- **Area:** Sidebar download progress
+- **Symptom:** The circular Downloads badge could show `99` while the real Downloads page showed a much lower current percentage.
+- **Root cause:** The badge treated progress as a permanent high-water mark and refused to decrease. Native launch stages may reset or lower progress when moving into another real installation phase, and a new task could also inherit the previous badge value.
+- **Fix:** The sidebar badge now mirrors the current native progress value exactly, clamps it to `0–100`, and accepts legitimate phase decreases instead of retaining stale progress.
+- **Verification:** Launch an instance requiring downloads and compare the sidebar number with the Downloads page throughout every phase; the rounded integer values must remain synchronized.
+- **Do not repeat:** Do not smooth staged download progress with logic that only allows increases unless the backend supplies one globally monotonic aggregate percentage.

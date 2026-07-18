@@ -174,6 +174,47 @@ struct BloomWingAccountState {
     equipped_wing_colorway_id: Option<String>,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BloomBraceletCatalogItem {
+    id: String,
+    name: String,
+    collection: String,
+    model_revision: String,
+    texture_revision: String,
+    preview_revision: String,
+    offset: [f32; 3],
+    rotation: [f32; 3],
+    pivot: [f32; 3],
+    scale: f32,
+    #[serde(default)]
+    colorways: Vec<BloomCosmeticColorway>,
+}
+
+#[derive(serde::Deserialize)]
+struct BloomBraceletCatalogResponse { items: Vec<BloomBraceletCatalogItem> }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BloomBraceletAssetLease { url: String, expires_at: u64, revision: String }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BloomBraceletPreviewData { data_url: String, revision: String }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BloomBraceletAccountState {
+    collection_ids: Vec<String>,
+    equipped_bracelet_id: Option<String>,
+    #[serde(default)]
+    equipped_bracelet_colorway_id: Option<String>,
+    #[serde(default = "default_bracelet_arm")]
+    equipped_bracelet_arm: String,
+}
+
+fn default_bracelet_arm() -> String { "right".into() }
+
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CatalogMod {
@@ -263,6 +304,7 @@ fn catalog_category(category: &str) -> Result<(&'static str, &'static str, &'sta
         "mods" => Ok(("mod", "Fabric", "mods")),
         "resourcepacks" => Ok(("resourcepack", "Minecraft", "resourcepacks")),
         "shaderpacks" => Ok(("shader", "Shader", "shaderpacks")),
+        "modpacks" => Ok(("modpack", "Fabric", "")),
         _ => Err("Unsupported Modrinth content category.".into()),
     }
 }
@@ -288,7 +330,7 @@ async fn direct_modrinth_search(
         vec![format!("project_type:{project_type}")],
         vec![format!("versions:{game_version}")],
     ];
-    if category == "mods" {
+    if category == "mods" || category == "modpacks" {
         facets.push(vec!["categories:fabric".to_string()]);
     }
     let client = reqwest::Client::builder()
@@ -346,7 +388,7 @@ async fn direct_modrinth_search(
                     ("include_changelog", "false"),
                 ]);
             let loaders;
-            if category == "mods" {
+            if category == "mods" || category == "modpacks" {
                 loaders = serde_json::to_string(&["fabric"]).ok()?;
                 request = request.query(&[("loaders", loaders.as_str())]);
             }
@@ -841,6 +883,87 @@ async fn set_bloom_equipped_wing(
         let detail = response.text().await.unwrap_or_default();
         return Err(if detail.is_empty() { format!("Bloom could not equip the wings ({status}).") } else { format!("Bloom could not equip the wings ({status}): {detail}") });
     }
+    save_refreshed_launcher_session(&state, &stored, session)
+}
+
+#[tauri::command]
+async fn list_bloom_bracelets() -> Result<Vec<BloomBraceletCatalogItem>, String> {
+    reqwest::Client::builder().timeout(std::time::Duration::from_secs(10))
+        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION"))).build().map_err(|e| e.to_string())?
+        .get(format!("{}/v1/bracelets", BACKEND_URL.trim_end_matches('/'))).send().await
+        .map_err(|e| format!("Bloom's bracelet catalog is unavailable: {e}"))?.error_for_status()
+        .map_err(|e| format!("Bloom's bracelet catalog rejected the request: {e}"))?
+        .json::<BloomBraceletCatalogResponse>().await.map(|r| r.items)
+        .map_err(|e| format!("Bloom's bracelet catalog returned invalid data: {e}"))
+}
+
+#[tauri::command]
+async fn load_bloom_bracelet_preview_data(bracelet_id: String, colorway_id: Option<String>) -> Result<BloomBraceletPreviewData, String> {
+    use base64::Engine;
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15))
+        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION"))).build().map_err(|e| e.to_string())?;
+    let path = colorway_id.map(|id| format!("/v1/bracelets/{bracelet_id}/colorways/{id}/preview"))
+        .unwrap_or_else(|| format!("/v1/bracelets/{bracelet_id}/preview"));
+    let lease = client.get(format!("{}{}", BACKEND_URL.trim_end_matches('/'), path)).send().await
+        .map_err(|e| format!("Bloom's bracelet preview is unavailable: {e}"))?.error_for_status()
+        .map_err(|e| format!("Bloom's bracelet preview could not be opened: {e}"))?
+        .json::<BloomBraceletAssetLease>().await.map_err(|e| format!("Bloom's bracelet service returned invalid data: {e}"))?;
+    let bytes = client.get(&lease.url).send().await.map_err(|e| format!("Bloom's bracelet preview could not be downloaded: {e}"))?
+        .error_for_status().map_err(|e| format!("Bloom's bracelet preview download was rejected: {e}"))?
+        .bytes().await.map_err(|e| format!("Bloom's bracelet preview was incomplete: {e}"))?;
+    if bytes.len() > 3 * 1024 * 1024 { return Err("Bloom's bracelet preview is unexpectedly large.".into()); }
+    Ok(BloomBraceletPreviewData { data_url: format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)), revision: lease.revision })
+}
+
+async fn send_bloom_bracelet_request(session: &MinecraftSession, method: reqwest::Method, path: &str, body: Option<&serde_json::Value>) -> Result<reqwest::Response, String> {
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(12))
+        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION"))).build().map_err(|e| e.to_string())?;
+    let request = client.request(method, format!("{}{}", BACKEND_URL.trim_end_matches('/'), path)).bearer_auth(&session.access_token);
+    (if let Some(value) = body { request.json(value) } else { request }).send().await
+        .map_err(|e| format!("Bloom's bracelet service is unavailable: {e}"))
+}
+
+#[tauri::command]
+async fn get_bloom_bracelet_account_state(state: tauri::State<'_, LauncherState>) -> Result<BloomBraceletAccountState, String> {
+    let stored = launcher_session(&state)?;
+    let mut session = stored.clone();
+    let mut response = send_bloom_bracelet_request(&session, reqwest::Method::GET, "/v1/bracelets/me", None).await?;
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        session = refresh_minecraft_session(&stored).await.map_err(|e| format!("Your selected Microsoft account needs to reconnect: {e}"))?;
+        response = send_bloom_bracelet_request(&session, reqwest::Method::GET, "/v1/bracelets/me", None).await?;
+    }
+    if !response.status().is_success() { return Err(format!("Bloom's bracelet service rejected the account state ({}).", response.status())); }
+    let result = response.json::<BloomBraceletAccountState>().await.map_err(|e| format!("Bloom's bracelet service returned invalid account data: {e}"))?;
+    save_refreshed_launcher_session(&state, &stored, session)?;
+    Ok(result)
+}
+
+#[tauri::command]
+async fn add_bloom_bracelets_to_collection(state: tauri::State<'_, LauncherState>, bracelet_ids: Vec<String>) -> Result<(), String> {
+    let stored = launcher_session(&state)?;
+    let mut session = stored.clone();
+    let body = serde_json::json!({ "braceletIds": bracelet_ids });
+    let mut response = send_bloom_bracelet_request(&session, reqwest::Method::PUT, "/v1/bracelets/collection", Some(&body)).await?;
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        session = refresh_minecraft_session(&stored).await.map_err(|e| format!("Your selected Microsoft account needs to reconnect: {e}"))?;
+        response = send_bloom_bracelet_request(&session, reqwest::Method::PUT, "/v1/bracelets/collection", Some(&body)).await?;
+    }
+    if !response.status().is_success() { let status = response.status(); let detail = response.text().await.unwrap_or_default(); return Err(format!("Bloom could not add the bracelets ({status}): {detail}")); }
+    save_refreshed_launcher_session(&state, &stored, session)
+}
+
+#[tauri::command]
+async fn set_bloom_equipped_bracelet(state: tauri::State<'_, LauncherState>, bracelet_id: Option<String>, colorway_id: Option<String>, arm: String) -> Result<(), String> {
+    if arm != "left" && arm != "right" { return Err("Bracelet arm must be left or right.".into()); }
+    let stored = launcher_session(&state)?;
+    let mut session = stored.clone();
+    let body = serde_json::json!({ "braceletId": bracelet_id, "colorwayId": colorway_id, "arm": arm });
+    let mut response = send_bloom_bracelet_request(&session, reqwest::Method::PUT, "/v1/bracelets/equipped", Some(&body)).await?;
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        session = refresh_minecraft_session(&stored).await.map_err(|e| format!("Your selected Microsoft account needs to reconnect: {e}"))?;
+        response = send_bloom_bracelet_request(&session, reqwest::Method::PUT, "/v1/bracelets/equipped", Some(&body)).await?;
+    }
+    if !response.status().is_success() { let status = response.status(); let detail = response.text().await.unwrap_or_default(); return Err(format!("Bloom could not equip the bracelet ({status}): {detail}")); }
     save_refreshed_launcher_session(&state, &stored, session)
 }
 
@@ -2010,6 +2133,71 @@ fn bloom_data_dir() -> Result<std::path::PathBuf, String> {
     Ok(path)
 }
 
+fn custom_background_path() -> Result<std::path::PathBuf, String> {
+    Ok(bloom_data_dir()?.join("custom-background.image"))
+}
+
+fn custom_background_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+fn save_custom_background_blocking(bytes: Vec<u8>) -> Result<String, String> {
+    use base64::Engine;
+    if bytes.is_empty() || bytes.len() > 32 * 1024 * 1024 {
+        return Err("Choose a background image smaller than 32 MB.".into());
+    }
+    let mime = custom_background_mime(&bytes)
+        .ok_or_else(|| "Choose a valid PNG, JPEG, or WebP background image.".to_string())?;
+    let path = custom_background_path()?;
+    let temporary = path.with_extension("image.part");
+    std::fs::write(&temporary, &bytes).map_err(|error| error.to_string())?;
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|error| error.to_string())?;
+    }
+    std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+    Ok(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+#[tauri::command]
+async fn save_custom_background(bytes: Vec<u8>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || save_custom_background_blocking(bytes))
+        .await
+        .map_err(|error| format!("The background image writer stopped unexpectedly: {error}"))?
+}
+
+fn load_custom_background_blocking() -> Result<Option<String>, String> {
+    use base64::Engine;
+    let path = custom_background_path()?;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let mime = custom_background_mime(&bytes)
+        .ok_or_else(|| "The saved custom background is not a supported image.".to_string())?;
+    Ok(Some(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )))
+}
+
+#[tauri::command]
+async fn load_custom_background() -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(load_custom_background_blocking)
+        .await
+        .map_err(|error| format!("The background image reader stopped unexpectedly: {error}"))?
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct LockerSkin {
@@ -2592,6 +2780,48 @@ async fn list_instances() -> Result<Vec<InstanceConfig>, String> {
         .map_err(|error| format!("The instance library reader stopped unexpectedly: {error}"))?
 }
 
+fn delete_instance_blocking(instance_id: String) -> Result<(), String> {
+    if instance_id.is_empty()
+        || !instance_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    {
+        return Err("Bloom refused to delete an invalid instance identifier.".into());
+    }
+    let config = load_instance(&instance_id)?;
+    let target = std::path::PathBuf::from(&config.directory);
+    let target_name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Bloom could not verify this instance folder.")?;
+    if !target_name.eq_ignore_ascii_case(&instance_id) {
+        return Err("Bloom refused to delete this folder because it does not match the instance identifier.".into());
+    }
+    if target.exists() {
+        let metadata = std::fs::symlink_metadata(&target).map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err("Bloom refused to recursively delete an unsafe instance path.".into());
+        }
+        std::fs::remove_dir_all(&target)
+            .map_err(|error| format!("Bloom could not delete the instance files: {error}"))?;
+    }
+    let record = bloom_data_dir()?
+        .join("instances")
+        .join(format!("{instance_id}.json"));
+    if record.exists() {
+        std::fs::remove_file(record)
+            .map_err(|error| format!("The instance files were deleted, but Bloom could not remove its library record: {error}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_instance(instance_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || delete_instance_blocking(instance_id))
+        .await
+        .map_err(|error| format!("The instance deletion task stopped unexpectedly: {error}"))?
+}
+
 fn load_instance(instance_id: &str) -> Result<InstanceConfig, String> {
     let path = bloom_data_dir()?
         .join("instances")
@@ -2770,6 +3000,27 @@ fn toggle_instance_content(
         std::fs::rename(source, folder.join(target_name)).map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+fn delete_instance_content(
+    instance_id: String,
+    category: String,
+    file_name: String,
+) -> Result<(), String> {
+    if std::path::Path::new(&file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        != Some(file_name.as_str())
+    {
+        return Err("Invalid content filename.".into());
+    }
+    let folder = content_folder(&load_instance(&instance_id)?, &category)?;
+    let target = folder.join(&file_name);
+    if !target.is_file() {
+        return Err("That file no longer exists.".into());
+    }
+    std::fs::remove_file(target).map_err(|error| error.to_string())
 }
 
 fn set_instance_icon_blocking(instance_id: String, icon: String) -> Result<InstanceConfig, String> {
@@ -3138,18 +3389,12 @@ fn extract_pack_overrides(
     Ok(())
 }
 
-#[tauri::command]
-fn import_fabric_modpack(
+fn import_fabric_modpack_path(
     app: tauri::AppHandle,
-    state: tauri::State<'_, LauncherState>,
-) -> Result<Option<String>, String> {
+    state: &LauncherState,
+    pack_path: std::path::PathBuf,
+) -> Result<String, String> {
     use std::io::Read;
-    let Some(pack_path) = rfd::FileDialog::new()
-        .add_filter("Fabric Modrinth pack", &["mrpack", "zip"])
-        .pick_file()
-    else {
-        return Ok(None);
-    };
     let file = std::fs::File::open(&pack_path).map_err(|error| error.to_string())?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|_| "Choose a valid .mrpack or ZIP containing modrinth.index.json.".to_string())?;
@@ -3365,7 +3610,75 @@ fn import_fabric_modpack(
             *value = false;
         }
     });
-    Ok(Some(id))
+    Ok(id)
+}
+
+#[tauri::command]
+fn import_fabric_modpack(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, LauncherState>,
+) -> Result<Option<String>, String> {
+    let Some(pack_path) = rfd::FileDialog::new()
+        .add_filter("Fabric Modrinth pack", &["mrpack", "zip"])
+        .pick_file()
+    else {
+        return Ok(None);
+    };
+    import_fabric_modpack_path(app, &state, pack_path).map(Some)
+}
+
+#[tauri::command]
+async fn import_modrinth_modpack(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, LauncherState>,
+    project_id: String,
+    version_id: String,
+) -> Result<String, String> {
+    if project_id.trim().is_empty() || version_id.trim().is_empty() {
+        return Err("That Modrinth modpack selection is invalid.".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION"), " (support@bloomclient.org)"))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let version = client
+        .get(format!("https://api.modrinth.com/v2/version/{}", version_id.trim()))
+        .send()
+        .await
+        .map_err(|error| format!("Bloom could not resolve that Modrinth pack: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Modrinth rejected that pack version: {error}"))?
+        .json::<ModrinthVersion>()
+        .await
+        .map_err(|error| format!("Modrinth returned invalid pack information: {error}"))?;
+    let file = primary_modrinth_file(&version).ok_or("That Modrinth release has no downloadable pack file.")?;
+    if !file.filename.to_ascii_lowercase().ends_with(".mrpack") || !allowed_pack_download(&file.url) {
+        return Err("Bloom only imports trusted Modrinth .mrpack downloads.".into());
+    }
+    if file.size > 512 * 1024 * 1024 {
+        return Err("That Modrinth pack is larger than Bloom's 512 MB import limit.".into());
+    }
+    let bytes = client
+        .get(&file.url)
+        .send()
+        .await
+        .map_err(|error| format!("Bloom could not download that Modrinth pack: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("The Modrinth pack download failed: {error}"))?
+        .bytes()
+        .await
+        .map_err(|error| format!("Bloom could not read that Modrinth pack: {error}"))?;
+    if bytes.len() > 512 * 1024 * 1024 {
+        return Err("That Modrinth pack exceeded Bloom's 512 MB import limit.".into());
+    }
+    let imports = bloom_data_dir()?.join("imports");
+    std::fs::create_dir_all(&imports).map_err(|error| error.to_string())?;
+    let safe_project = project_id.chars().filter(|character| character.is_ascii_alphanumeric() || *character == '-' || *character == '_').collect::<String>();
+    let safe_version = version_id.chars().filter(|character| character.is_ascii_alphanumeric() || *character == '-' || *character == '_').collect::<String>();
+    let pack_path = imports.join(format!("{}-{}.mrpack", safe_project, safe_version));
+    std::fs::write(&pack_path, bytes).map_err(|error| format!("Bloom could not save the downloaded pack: {error}"))?;
+    import_fabric_modpack_path(app, &state, pack_path)
 }
 
 fn install_fabric_api(config: &InstanceConfig) -> Result<(), String> {
@@ -4665,6 +4978,13 @@ pub fn run() {
             get_bloom_wing_account_state,
             add_bloom_wings_to_collection,
             set_bloom_equipped_wing,
+            list_bloom_bracelets,
+            load_bloom_bracelet_preview_data,
+            get_bloom_bracelet_account_state,
+            add_bloom_bracelets_to_collection,
+            set_bloom_equipped_bracelet,
+            save_custom_background,
+            load_custom_background,
             search_modrinth_content,
             request_microsoft_device_code,
             complete_microsoft_login,
@@ -4680,8 +5000,10 @@ pub fn run() {
             get_minecraft_releases,
             save_instance,
             list_instances,
+            delete_instance,
             list_instance_content,
             toggle_instance_content,
+            delete_instance_content,
             set_instance_icon,
             update_instance_settings,
             open_instance_folder,
@@ -4691,6 +5013,7 @@ pub fn run() {
             get_autotune_benchmark_result,
             get_autotune_benchmark_status,
             import_fabric_modpack,
+            import_modrinth_modpack,
             install_modrinth_content,
             launch_minecraft,
             choose_game_directory,

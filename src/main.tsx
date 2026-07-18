@@ -33,6 +33,7 @@ import {
   Crown,
   Feather,
   Download,
+  ExternalLink,
   Folder,
   FolderOpen,
   House,
@@ -67,6 +68,7 @@ import {
   Unlock,
   UserRound,
   WandSparkles,
+  Watch,
   LockKeyhole,
   ArrowLeft as X,
   Square,
@@ -95,14 +97,29 @@ import {
   type WingAccountState,
   type WingCatalogItem,
 } from "./services/wings";
+import {
+  braceletProvider,
+  loadBraceletAccountState,
+  saveBraceletAccountState,
+  type BraceletAccountState,
+  type BraceletArm,
+  type BraceletCatalogItem,
+} from "./services/bracelets";
 import { activeColorway, type CosmeticColorway } from "./services/cosmetics";
 
 type Theme = "dark" | "oled" | "dusk";
+type HomeLayout = "Dashboard" | "Spotlight";
+type CosmeticCategory = "capes" | "hats" | "wings" | "bracelets";
 type SettingsState = {
   theme: Theme;
   accent: string;
   animations: boolean;
   buttonPressDuration: number;
+  customBackground: boolean;
+  backgroundOpacity: number;
+  blurredSidebars: boolean;
+  sidebarOpacity: number;
+  blurredButtons: boolean;
   ultraPerformance: boolean;
   tray: boolean;
   updates: boolean;
@@ -117,6 +134,8 @@ type SettingsState = {
   defaultVersion: string;
   defaultLoader: "Vanilla" | "Fabric";
   launchMethod: "Standard window" | "Fullscreen";
+  homeLayout: HomeLayout;
+  doubleClickToPlay: boolean;
   downloadWorkers: 1 | 3 | 5;
   recommendations: boolean;
   gameDirectory: string;
@@ -126,6 +145,11 @@ const defaults: SettingsState = {
   accent: "#a56bff",
   animations: true,
   buttonPressDuration: 750,
+  customBackground: false,
+  backgroundOpacity: 100,
+  blurredSidebars: false,
+  sidebarOpacity: 100,
+  blurredButtons: false,
   ultraPerformance: false,
   tray: true,
   updates: true,
@@ -140,10 +164,13 @@ const defaults: SettingsState = {
   defaultVersion: "Latest release",
   defaultLoader: "Fabric",
   launchMethod: "Standard window",
+  homeLayout: "Spotlight",
+  doubleClickToPlay: false,
   downloadWorkers: 3,
   recommendations: true,
   gameDirectory: ".minecraft/instances/",
 };
+const spotlightDefaultMigrationKey = "bloom-home-layout-spotlight-v1";
 const nav = [
   [House, "Home"],
   [Layers3, "Instances"],
@@ -155,6 +182,7 @@ const nav = [
 const settingTabs = [
   [SettingsIcon, "General"],
   [Palette, "Appearance"],
+  [ImagePlus, "Background"],
   [SlidersHorizontal, "Performance"],
   [Cuboid, "Minecraft"],
   [Rocket, "Launcher"],
@@ -197,7 +225,7 @@ function Toggle({
     if (document.documentElement.dataset.animations !== "on") return;
     if (ref.current)
       animate(ref.current, {
-        translateX: next ? 16 : 0,
+        translateX: next ? 20 : 0,
         duration: 220,
         ease: "out(3)",
       });
@@ -212,6 +240,60 @@ function Toggle({
     </button>
   );
 }
+function FillCheckbox({ value, onChange, label }: { value: boolean; onChange: (value: boolean) => void; label: string }) {
+  return <button className={`fill-checkbox ${value ? "checked" : ""}`} onClick={() => onChange(!value)} aria-pressed={value} aria-label={label}><span /></button>;
+}
+function PercentSlider({ value, onChange, label }: { value: number; onChange: (value: number) => void; label: string }) {
+  return <div className="setting-percent-slider" style={{ "--setting-range-fill": `${value}%` } as CSSProperties}>
+    <input type="range" min="0" max="100" step="1" value={value} aria-label={label} aria-valuetext={`${value} percent`} onChange={event => onChange(Number(event.target.value))} />
+    <output>{value}%</output>
+  </div>;
+}
+
+const closedDropdownStyle: CSSProperties = {
+  opacity: 0,
+  clipPath: "inset(0 0 100% 0)",
+  transformOrigin: "top center",
+};
+
+function revealDropdown(menu: HTMLDivElement) {
+  const items = Array.from(menu.querySelectorAll<HTMLButtonElement>(":scope > button"));
+  const motionEnabled = document.documentElement.dataset.animations === "on"
+    && document.documentElement.dataset.performance !== "ultra";
+  if (!motionEnabled) {
+    menu.style.opacity = "1";
+    menu.style.clipPath = "none";
+    menu.style.transform = "none";
+    items.forEach(item => { item.style.opacity = "1"; item.style.transform = "none"; });
+    return;
+  }
+
+  waapi.animate(menu, {
+    opacity: [0, 1],
+    clipPath: ["inset(0 0 100% 0)", "inset(0 0 0% 0)"],
+    transform: ["translateY(-7px)", "translateY(0)"],
+    duration: 310,
+    ease: "cubic-bezier(.65,0,.35,1)",
+    persist: true,
+  });
+
+  // Only stagger rows that can be visible. Long version lists remain cheap.
+  items.forEach((item, index) => {
+    if (index >= 10) {
+      item.style.opacity = "1";
+      return;
+    }
+    waapi.animate(item, {
+      opacity: [0, 1],
+      transform: ["translateY(-5px)", "translateY(0)"],
+      delay: 75 + index * 25,
+      duration: 165,
+      ease: "cubic-bezier(.22,.7,.24,1)",
+      persist: true,
+    });
+  });
+}
+
 function Select({
   value,
   options,
@@ -231,7 +313,14 @@ function Select({
     if (!open) return;
     const place = () => {
       const bounds = triggerRef.current?.getBoundingClientRect();
-      if (bounds) setMenuPosition({ top: bounds.bottom + 6, left: Math.min(bounds.left, window.innerWidth - Math.max(bounds.width, 150) - 8), width: Math.max(bounds.width, 150) });
+      if (!bounds) return;
+      const width = variant === "filter" ? 150 : Math.max(bounds.width - 10, 140);
+      const preferredLeft = variant === "filter" ? bounds.right - width : bounds.left + 5;
+      setMenuPosition({
+        top: bounds.bottom - 1,
+        left: Math.max(8, Math.min(preferredLeft, window.innerWidth - width - 8)),
+        width,
+      });
     };
     const closeOutside = (event: PointerEvent) => { const target = event.target as Node; if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false); };
     place();
@@ -239,7 +328,10 @@ function Select({
     window.addEventListener("scroll", place, true);
     document.addEventListener("pointerdown", closeOutside);
     return () => { window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); document.removeEventListener("pointerdown", closeOutside); };
-  }, [open]);
+  }, [open, variant]);
+  useEffect(() => {
+    if (open && menuRef.current) revealDropdown(menuRef.current);
+  }, [open, options.length]);
   return (
     <div className={`select-wrap ${variant === "filter" ? `filter-select ${value !== "All" ? "filtered" : ""}` : ""}`}>
       <button
@@ -250,12 +342,13 @@ function Select({
         aria-label={variant === "filter" ? `Filter instances: ${value}` : undefined}
         title={variant === "filter" ? `Filter: ${value}` : undefined}
       >
-        {variant === "filter" ? <SlidersHorizontal size={17} /> : <>{value}<ChevronDown size={15} className={open ? "rotated" : ""} /></>}
+        {variant === "filter" ? <SlidersHorizontal size={17} /> : <><span className="select-value">{value}</span><ChevronDown size={15} className={open ? "rotated" : ""} /></>}
       </button>
       {open && createPortal(
-        <div ref={menuRef} className="select-menu select-menu-portal" style={{ position: "fixed", top: menuPosition.top, left: menuPosition.left, right: "auto", width: menuPosition.width }}>
+        <div ref={menuRef} className="select-menu select-menu-portal" style={{ ...closedDropdownStyle, position: "fixed", top: menuPosition.top, left: menuPosition.left, right: "auto", width: menuPosition.width }}>
           {options.map((option) => (
             <button
+              style={{ opacity: 0 }}
               className={option === value ? "chosen" : ""}
               key={option}
               onClick={() => {
@@ -434,6 +527,8 @@ function SettingsPage({
   profile,
   profileIcon,
   onProfileIconChange,
+  backgroundImage,
+  onBackgroundImageChange,
   initialTab,
   navigationKey,
   currentVersion,
@@ -452,6 +547,8 @@ function SettingsPage({
   profile: MinecraftProfile | null;
   profileIcon: string | null;
   onProfileIconChange: (icon: string) => void;
+  backgroundImage: string | null;
+  onBackgroundImageChange: (image: string) => void;
   initialTab?: string;
   navigationKey: number;
   currentVersion: string;
@@ -470,12 +567,15 @@ function SettingsPage({
   ) => setSettings({ ...settings, [key]: value });
   const [activeTab, setActiveTab] = useState("General");
   const [profileMessage, setProfileMessage] = useState("");
+  const [backgroundMessage, setBackgroundMessage] = useState("");
+  const [backgroundBusy, setBackgroundBusy] = useState(false);
   const [releaseOptions, setReleaseOptions] = useState<string[]>([]);
   const [javaOptions, setJavaOptions] = useState<string[]>(["Automatic"]);
   const [addingAccount, setAddingAccount] = useState(false);
   const [pendingProfileAccountId, setPendingProfileAccountId] = useState<string | null>(null);
   const [profileConfirmPosition, setProfileConfirmPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   const profileIconInput = useRef<HTMLInputElement>(null);
+  const backgroundInput = useRef<HTMLInputElement>(null);
   const profileAccountPicker = useRef<HTMLDivElement>(null);
   const sections = useRef<Record<string, HTMLDivElement | null>>({});
   const jumpTo = (label: string) => {
@@ -531,11 +631,39 @@ function SettingsPage({
     reader.onload = () => { onProfileIconChange(String(reader.result)); setProfileMessage("Profile picture updated."); };
     reader.readAsDataURL(file);
   };
+  const chooseBackground = async (file?: File) => {
+    if (!file) return;
+    setBackgroundMessage("");
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) { setBackgroundMessage("Choose a PNG, JPEG, or WebP image."); return; }
+    if (file.size > 32 * 1024 * 1024) { setBackgroundMessage("Choose an image smaller than 32 MB."); return; }
+    setBackgroundBusy(true);
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        image.onerror = () => reject(new Error("Bloom could not read that image."));
+        image.src = objectUrl;
+      });
+      if (dimensions.width > 4096 || dimensions.height > 4096) throw new Error("Background images can be up to 4096 pixels on either side.");
+      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      const saved = await invoke<string>("save_custom_background", { bytes });
+      onBackgroundImageChange(saved);
+      setBackgroundMessage(`${dimensions.width}×${dimensions.height} background saved locally.`);
+    } catch (error) {
+      setBackgroundMessage(String(error));
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+      setBackgroundBusy(false);
+      if (backgroundInput.current) backgroundInput.current.value = "";
+    }
+  };
+  const ActiveSettingIcon = settingTabs.find(([, label]) => label === activeTab)?.[0] ?? SettingsIcon;
   return (
     <div className="settings-page">
       <div className="settings-heading">
-        <h1>Settings</h1>
-        <p>Configure Bloom Client to your liking.</p>
+        <div><h1>Settings</h1><p>Configure Bloom Client to your liking.</p></div>
+        <div className="settings-active-category"><ActiveSettingIcon size={16} /><span>Active category</span><b>{activeTab}</b></div>
       </div>
       <div className="settings-layout">
         <aside className="settings-tabs">
@@ -662,6 +790,37 @@ function SettingsPage({
               </SettingRow>
             </div>
           </div>
+          <div className="settings-section" {...section("Background")}>
+            <h2>Background</h2>
+            <p className="section-subtitle">Personalize Bloom with an image saved only on this computer.</p>
+            <div className="settings-card background-settings-card">
+              <SettingRow title="Custom Background" description="Use a local image behind Bloom Client. A 16:9 image is recommended.">
+                <FillCheckbox value={settings.customBackground} onChange={value => update("customBackground", value)} label="Use custom background" />
+              </SettingRow>
+              {settings.customBackground && <>
+                <SettingRow title="Background Image" description="Upload a PNG, JPEG, or WebP image up to 4K resolution.">
+                  <div className="background-upload-control">
+                    {backgroundImage && <span className="background-thumbnail" style={{ backgroundImage: `url(${backgroundImage})` }} />}
+                    <button disabled={backgroundBusy} onClick={() => backgroundInput.current?.click()}><Upload size={15} />{backgroundBusy ? "Saving…" : backgroundImage ? "Replace image" : "Upload image"}</button>
+                    <input ref={backgroundInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={event => void chooseBackground(event.target.files?.[0])} />
+                  </div>
+                </SettingRow>
+                <SettingRow title="Image Opacity" description="Lower values fade the background into black so controls remain readable.">
+                  <PercentSlider value={settings.backgroundOpacity} onChange={value => update("backgroundOpacity", value)} label="Background image opacity" />
+                </SettingRow>
+                <SettingRow title="Blurred Sidebars" description="Let the background show through the sidebar and advertising rail with a soft blur.">
+                  <FillCheckbox value={settings.blurredSidebars} onChange={value => update("blurredSidebars", value)} label="Use blurred sidebars" />
+                </SettingRow>
+                {settings.blurredSidebars && <SettingRow title="Sidebar Opacity" description="100% is solid. Lower values reveal more of the blurred background.">
+                  <PercentSlider value={settings.sidebarOpacity} onChange={value => update("sidebarOpacity", value)} label="Sidebar opacity" />
+                </SettingRow>}
+                <SettingRow title="Blurred Button Backgrounds" description="Give filled buttons a translucent glass background while keeping their colors readable.">
+                  <FillCheckbox value={settings.blurredButtons} onChange={value => update("blurredButtons", value)} label="Use blurred button backgrounds" />
+                </SettingRow>
+                {backgroundMessage && <div className="background-settings-message">{backgroundMessage}</div>}
+              </>}
+            </div>
+          </div>
           <div className="settings-section" {...section("Performance")}>
             <h2>Performance</h2>
             <p className="section-subtitle">
@@ -739,6 +898,25 @@ function SettingsPage({
               Control how Bloom Client starts and launches games.
             </p>
             <div className="settings-card">
+              <SettingRow
+                title="Home Layout"
+                description="Choose between Bloom's full dashboard and a focused traditional launcher."
+              >
+                <Select
+                  value={settings.homeLayout}
+                  options={["Dashboard", "Spotlight"]}
+                  onChange={(v) => update("homeLayout", v as HomeLayout)}
+                />
+              </SettingRow>
+              <SettingRow
+                title="Double Click to Play"
+                description="Quickly double-click an instance to launch it. A single click still opens its page."
+              >
+                <Toggle
+                  value={settings.doubleClickToPlay}
+                  onChange={(v) => update("doubleClickToPlay", v)}
+                />
+              </SettingRow>
               <SettingRow
                 title="Launch Method"
                 description="Choose how Minecraft windows open."
@@ -959,6 +1137,7 @@ function NewInstancePage({
   const [javas, setJavas] = useState<JavaInstallation[]>([]);
   const [message, setMessage] = useState("");
   const [importing, setImporting] = useState(false);
+  const [modrinthOpen, setModrinthOpen] = useState(false);
   useEffect(() => {
     void Promise.all([
       invoke<Release[]>("get_minecraft_releases"),
@@ -1025,10 +1204,14 @@ function NewInstancePage({
       .map((java) => `Java ${java.majorVersion} — ${java.path}`),
   ];
   return (
-    <div className="instance-page">
+    <div className={`instance-page ${modrinthOpen ? "modrinth-pack-open" : ""}`}>
+      <div className="new-instance-background">
       <div className="instance-heading">
         <div><h1>New Instance</h1><p>Create a new Minecraft instance to start playing.</p></div>
-        <button className="import-pack-action" disabled={importing} onClick={() => void importPack()}><CirclePlus size={17} /><span>{importing ? "Opening…" : "Import"}</span></button>
+        <div className="new-instance-import-actions">
+          <button className="import-pack-action secondary-import" disabled={importing} onClick={() => void importPack()}><PackageOpen size={17} /><span>{importing ? "Opening…" : "Import"}</span></button>
+          <button className="import-pack-action" disabled={importing} onClick={() => setModrinthOpen(true)}><CirclePlus size={17} /><span>Add from Modrinth</span></button>
+        </div>
       </div>
       <div className="instance-layout">
         <section className="instance-main">
@@ -1183,12 +1366,67 @@ function NewInstancePage({
           </button>
         </div>
       </div>
+      </div>
+      {modrinthOpen && <ModrinthPackBrowser gameVersion={draft.version} onClose={() => setModrinthOpen(false)} onImported={() => { setModrinthOpen(false); onCreated("downloads"); }} />}
     </div>
   );
 }
 type InstanceContentItem = { id: string; name: string; version: string; fileName: string; size: number; enabled: boolean; icon?: string | null };
 type CatalogItem = { provider: string; projectId: string; slug: string; title: string; summary: string; iconUrl?: string | null; author: string; downloads: number; loader: string; gameVersion: string; versionId: string; versionNumber: string; fileName: string; fileSize: number };
 type CatalogSearchResult = { items: CatalogItem[]; offset: number; limit: number; total: number };
+function ModrinthPackBrowser({ gameVersion, onClose, onImported }: { gameVersion: string; onClose: () => void; onImported: (instanceId: string) => void }) {
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [catalog, setCatalog] = useState<CatalogSearchResult>({ items: [], offset: 0, limit: 20, total: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [installingId, setInstallingId] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!panelRef.current) return;
+    waapi.animate(panelRef.current, { opacity: [0, 1], transform: ["translateY(28px) scale(.985)", "translateY(0) scale(1)"], duration: 360, ease: "cubic-bezier(.22,.72,.2,1)", persist: true });
+  }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      setError("");
+      void invoke<CatalogSearchResult>("search_modrinth_content", { query, gameVersion, offset: (page - 1) * 20, category: "modpacks" })
+        .then(setCatalog)
+        .catch((reason) => { setCatalog({ items: [], offset: 0, limit: 20, total: 0 }); setError(String(reason)); })
+        .finally(() => setLoading(false));
+    }, query ? 260 : 0);
+    return () => window.clearTimeout(timer);
+  }, [query, gameVersion, page]);
+  useEffect(() => setPage(1), [query, gameVersion]);
+  const pageCount = Math.max(1, Math.ceil(catalog.total / Math.max(1, catalog.limit)));
+  const install = async (item: CatalogItem) => {
+    if (installingId) return;
+    setInstallingId(item.projectId);
+    setError("");
+    try {
+      const instanceId = await invoke<string>("import_modrinth_modpack", { projectId: item.projectId, versionId: item.versionId });
+      onImported(instanceId);
+    } catch (reason) {
+      setError(String(reason));
+      setInstallingId(null);
+    }
+  };
+  return <div className="modrinth-pack-layer" role="dialog" aria-modal="true" aria-label="Add a Modrinth modpack">
+    <div className="modrinth-pack-panel" ref={panelRef}>
+      <header><div><em>MODRINTH LIBRARY</em><h2>Add a Modpack</h2><p>Choose a Fabric pack compatible with Minecraft {gameVersion}.</p></div><button className="catalog-close" onClick={onClose}><X size={17} />Back</button></header>
+      <div className="modrinth-pack-list">
+        {loading ? <div className="catalog-loading"><i className="loading-dots" /><span>{query ? "Searching Modrinth" : "Loading featured modpacks"}</span></div> : error ? <div className="modrinth-pack-error"><TriangleAlert size={20} /><span>{error}</span></div> : catalog.items.length ? catalog.items.map((item) => <div className={`content-item catalog-item modrinth-pack-row ${installingId === item.projectId ? "is-pending" : ""}`} key={item.projectId}>
+          <span className="content-icon">{item.iconUrl ? <img src={item.iconUrl} alt="" loading="lazy" /> : <PackageOpen size={22} />}</span>
+          <div className="content-name"><b>{item.title}</b><small>{item.summary || `by ${item.author}`}</small></div>
+          <span className="content-loader">Fabric</span><span className="content-size">{formatBytes(item.fileSize)}</span>
+          <div className="catalog-item-actions"><button className="catalog-view-project" onClick={() => void openUrl(`https://modrinth.com/modpack/${item.slug}`)} aria-label={`View ${item.title} on Modrinth`}><ExternalLink size={16} /></button><button className="catalog-install" disabled={Boolean(installingId)} onClick={() => void install(item)} aria-label={`Create an instance from ${item.title}`}>{installingId === item.projectId ? <Timer size={16} /> : <Plus size={18} />}</button></div>
+        </div>) : <div className="content-empty"><PackageOpen size={25} /><b>No compatible packs found</b><span>Try another search or select a different Minecraft version.</span></div>}
+      </div>
+      <div className="modrinth-pack-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search Modrinth modpacks..." /></div>
+      {pageCount > 1 && <div className="content-pagination"><button disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><span>Page {page} of {pageCount}</span><button disabled={page >= pageCount} onClick={() => setPage(value => value + 1)}>Next</button></div>}
+    </div>
+  </div>;
+}
 type ContentInstallState = { instanceId: string; projectId: string; category: Exclude<InstanceTab, "settings">; state: "installing" | "installed" | "cancelled" | "error"; message: string; title: string; version: string };
 type InstanceTab = "mods" | "resourcepacks" | "shaderpacks" | "settings";
 const JVM_PRESETS = {
@@ -1197,14 +1435,63 @@ const JVM_PRESETS = {
   Overdrive: "-XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:+DisableExplicitGC -XX:MaxGCPauseMillis=35 -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:InitiatingHeapOccupancyPercent=15",
 } as const;
 
-function InstancePage({ instance, busy, onPlay, onChanged, onInstallContent }: { instance: InstanceDraft; busy: boolean; onPlay: () => void; onChanged: (instance: InstanceDraft) => void; onInstallContent: (item: CatalogItem, category: Exclude<InstanceTab, "settings">) => Promise<void> }) {
-  const [tab, setTab] = useState<InstanceTab>("mods");
+function InstanceContentActions({
+  item,
+  category,
+  onDelete,
+}: {
+  item: InstanceContentItem;
+  category: Exclude<InstanceTab, "settings">;
+  onDelete: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0, width: 178 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const bounds = triggerRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const width = 178;
+      setPosition({ top: bounds.bottom - 1, left: Math.max(8, Math.min(bounds.right - width, window.innerWidth - width - 8)), width });
+    };
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    document.addEventListener("pointerdown", closeOutside);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+      document.removeEventListener("pointerdown", closeOutside);
+    };
+  }, [open]);
+  useEffect(() => { if (open && menuRef.current) revealDropdown(menuRef.current); }, [open]);
+  const modrinthSection = category === "mods" ? "mods" : category === "resourcepacks" ? "resourcepacks" : "shaders";
+  return <>
+    <button ref={triggerRef} className="content-dots" aria-label={`Actions for ${item.name}`} aria-expanded={open} onClick={() => setOpen(value => !value)}><MoreHorizontal size={18} /></button>
+    {open && createPortal(
+      <div ref={menuRef} className="select-menu select-menu-portal content-actions-menu" style={{ ...closedDropdownStyle, position: "fixed", top: position.top, left: position.left, right: "auto", width: position.width }}>
+        <button style={{ opacity: 0 }} className="view-modrinth-action" onClick={() => { setOpen(false); void openUrl(`https://modrinth.com/${modrinthSection}?q=${encodeURIComponent(item.name)}`); }}><ExternalLink size={14} />View on Modrinth</button>
+        <button style={{ opacity: 0 }} className="delete-content-action" onClick={() => { setOpen(false); void onDelete(); }}><Trash2 size={14} />Delete</button>
+      </div>,
+      document.body,
+    )}
+  </>;
+}
+
+function InstancePage({ instance, busy, initialTab = "mods", initialCatalog = false, onPlay, onChanged, onInstallContent }: { instance: InstanceDraft; busy: boolean; initialTab?: InstanceTab; initialCatalog?: boolean; onPlay: () => void; onChanged: (instance: InstanceDraft) => void; onInstallContent: (item: CatalogItem, category: Exclude<InstanceTab, "settings">) => Promise<void> }) {
+  const [tab, setTab] = useState<InstanceTab>(initialTab);
   const [items, setItems] = useState<InstanceContentItem[]>([]);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("Name");
   const [filter, setFilter] = useState("All");
   const [contentPage, setContentPage] = useState(1);
-  const [browsingCatalog, setBrowsingCatalog] = useState(false);
+  const [browsingCatalog, setBrowsingCatalog] = useState(initialCatalog && instance.loader.toLowerCase().includes("fabric"));
   const [catalog, setCatalog] = useState<CatalogSearchResult>({ items: [], offset: 0, limit: 20, total: 0 });
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [pendingCatalogItems, setPendingCatalogItems] = useState<Set<string>>(() => new Set());
@@ -1216,6 +1503,7 @@ function InstancePage({ instance, busy, onPlay, onChanged, onInstallContent }: {
   const [jvmArguments, setJvmArguments] = useState(instance.jvmArguments);
   const instanceSegmentIndicator = useRef<HTMLSpanElement>(null);
   const previousContentTab = useRef<Exclude<InstanceTab, "settings">>("mods");
+  const preserveInitialCatalog = useRef(initialCatalog);
   const jvmPreset = Object.entries(JVM_PRESETS).find(([, args]) => args === jvmArguments)?.[0] || "Custom";
   const iconInput = useRef<HTMLInputElement>(null);
   const loadContent = async () => { if (tab === "settings") return; try { setItems(await invoke<InstanceContentItem[]>("list_instance_content", { instanceId: instance.id, category: tab })); } catch (error) { setMessage(String(error)); } };
@@ -1236,7 +1524,10 @@ function InstancePage({ instance, busy, onPlay, onChanged, onInstallContent }: {
     return () => unlisten?.();
   }, [instance.id, tab]);
   useEffect(() => { setName(instance.name); setMemory(instance.memory); setJvmArguments(instance.jvmArguments); }, [instance]);
-  useEffect(() => { setBrowsingCatalog(false); setSearch(""); }, [tab]);
+  useEffect(() => {
+    if (preserveInitialCatalog.current) { preserveInitialCatalog.current = false; return; }
+    setBrowsingCatalog(false); setSearch("");
+  }, [tab]);
   useEffect(() => { setContentPage(1); }, [tab, search, filter, sort, instance.id]);
   useEffect(() => {
     const indicator = instanceSegmentIndicator.current;
@@ -1268,6 +1559,14 @@ function InstancePage({ instance, busy, onPlay, onChanged, onInstallContent }: {
     return () => window.clearTimeout(timer);
   }, [browsingCatalog, tab, search, contentPage, instance.version]);
   const toggleItem = async (item: InstanceContentItem, enabled: boolean) => { try { await invoke("toggle_instance_content", { instanceId: instance.id, category: tab, fileName: item.fileName, enabled }); await loadContent(); } catch (error) { setMessage(String(error)); } };
+  const deleteItem = async (item: InstanceContentItem) => {
+    if (tab === "settings") return;
+    try {
+      await invoke("delete_instance_content", { instanceId: instance.id, category: tab, fileName: item.fileName });
+      setMessage(`${item.name} was deleted.`);
+      await loadContent();
+    } catch (error) { setMessage(String(error)); }
+  };
   const chooseIcon = (file?: File) => { if (!file) return; const reader = new FileReader(); reader.onload = () => { void invoke<InstanceDraft>("set_instance_icon", { instanceId: instance.id, icon: String(reader.result) }).then(onChanged).catch(error => setMessage(String(error))); }; reader.readAsDataURL(file); };
   const saveSettings = async () => { try { const saved = await invoke<InstanceDraft>("update_instance_settings", { instanceId: instance.id, name, memory, jvmArguments }); onChanged(saved); setMessage("Instance settings saved."); } catch (error) { setMessage(String(error)); } };
   const applyJvmPreset = (preset: string) => { if (preset in JVM_PRESETS) setJvmArguments(JVM_PRESETS[preset as keyof typeof JVM_PRESETS]); };
@@ -1300,6 +1599,10 @@ function InstancePage({ instance, busy, onPlay, onChanged, onInstallContent }: {
   const safePage = Math.min(contentPage, pageCount);
   const pagedItems = visibleItems.slice((safePage - 1) * 20, safePage * 20);
   const catalogPages = Math.max(1, Math.ceil(catalog.total / 20));
+  const openCatalogProject = (item: CatalogItem) => {
+    const section = tab === "mods" ? "mod" : tab === "resourcepacks" ? "resourcepack" : "shader";
+    void openUrl(`https://modrinth.com/${section}/${encodeURIComponent(item.slug || item.projectId)}`);
+  };
   const openCatalog = () => {
     if (tab === "mods" && !instance.loader.toLowerCase().includes("fabric")) { setMessage("The built-in mod catalog currently supports Fabric instances only."); return; }
     setSearch(""); setContentPage(1); setBrowsingCatalog(true); setMessage("");
@@ -1356,9 +1659,9 @@ function InstancePage({ instance, busy, onPlay, onChanged, onInstallContent }: {
             catalogLoading ? <div className="catalog-loading"><i className="loading-dots" /><span>{search ? "Searching Modrinth" : `Loading featured ${categoryLabel.toLowerCase()}`}</span></div> : catalog.items.length ? catalog.items.map(item => {
               const installed = catalogItemInstalled(item);
               const pending = pendingCatalogItems.has(catalogKey(item));
-              return <div className={`content-item catalog-item ${installed ? "is-installed" : ""} ${pending ? "is-pending" : ""}`} key={item.projectId}><span className="content-icon">{item.iconUrl ? <img src={item.iconUrl} alt="" loading="lazy" /> : tab === "mods" ? <Puzzle size={22} /> : tab === "resourcepacks" ? <PackageOpen size={22} /> : <Cuboid size={22} />}</span><div className="content-name"><b>{item.title}</b><small>{item.versionNumber} • by {item.author}</small></div><span className="content-loader">{item.loader}</span><span className="content-size">{formatBytes(item.fileSize)}</span><button className="catalog-install" disabled={installed || pending} onClick={() => void queueCatalogInstall(item)} aria-label={installed ? `${item.title} is installed` : pending ? `${item.title} is queued for installation` : `Install ${item.title}`}>{pending ? <Timer size={16} /> : <Plus size={18} />}</button>{installed && <span className="catalog-installed-state">Installed</span>}</div>;
+              return <div className={`content-item catalog-item ${installed ? "is-installed" : ""} ${pending ? "is-pending" : ""}`} key={item.projectId}><span className="content-icon">{item.iconUrl ? <img src={item.iconUrl} alt="" loading="lazy" /> : tab === "mods" ? <Puzzle size={22} /> : tab === "resourcepacks" ? <PackageOpen size={22} /> : <Cuboid size={22} />}</span><div className="content-name"><b>{item.title}</b><small>{item.versionNumber} • by {item.author}</small></div><span className="content-loader">{item.loader}</span><span className="content-size">{formatBytes(item.fileSize)}</span><div className="catalog-item-actions"><button className="catalog-view-project" onClick={() => openCatalogProject(item)} aria-label={`View ${item.title} on Modrinth`} title="View on Modrinth"><ExternalLink size={16} /></button><button className="catalog-install" disabled={installed || pending} onClick={() => void queueCatalogInstall(item)} aria-label={installed ? `${item.title} is installed` : pending ? `${item.title} is queued for installation` : `Install ${item.title}`}>{pending ? <Timer size={16} /> : <Plus size={18} />}</button></div>{installed && <span className="catalog-installed-state">Installed</span>}</div>;
             }) : <div className="content-empty"><Search size={24} /><b>No compatible {categoryLabel.toLowerCase()} found</b><span>Try a different search for Minecraft {instance.version}.</span></div>
-          ) : visibleItems.length ? pagedItems.map(item => <div className="content-item" key={item.id}><span className="content-icon">{item.icon ? <img src={item.icon} alt="" loading="lazy" /> : tab === "shaderpacks" ? <Cuboid size={22} /> : <PackageOpen size={22} />}</span><div className="content-name"><b>{item.name}</b><small>{item.version || item.fileName}</small></div><span className="content-loader">{tab === "mods" ? instance.loader : tab === "resourcepacks" ? "Minecraft" : "Shader"}</span><span className="content-size">{formatBytes(item.size)}</span><Toggle value={item.enabled} onChange={value => void toggleItem(item, value)} /><button className="content-dots"><MoreHorizontal size={18} /></button></div>) : <div className="content-empty"><PackageOpen size={24} /><b>No {categoryLabel.toLowerCase()} installed</b><span>Open the folder and add files manually, or browse Modrinth.</span><button onClick={() => void invoke("open_instance_folder", { instanceId: instance.id, category: tab })}>Open folder</button></div>}
+          ) : visibleItems.length ? pagedItems.map(item => <div className="content-item" key={item.id}><span className="content-icon">{item.icon ? <img src={item.icon} alt="" loading="lazy" /> : tab === "shaderpacks" ? <Cuboid size={22} /> : <PackageOpen size={22} />}</span><div className="content-name"><b>{item.name}</b><small>{item.version || item.fileName}</small></div><span className="content-loader">{tab === "mods" ? instance.loader : tab === "resourcepacks" ? "Minecraft" : "Shader"}</span><span className="content-size">{formatBytes(item.size)}</span><Toggle value={item.enabled} onChange={value => void toggleItem(item, value)} /><InstanceContentActions item={item} category={tab} onDelete={() => deleteItem(item)} /></div>) : <div className="content-empty"><PackageOpen size={24} /><b>No {categoryLabel.toLowerCase()} installed</b><span>Open the folder and add files manually, or browse Modrinth.</span><button onClick={() => void invoke("open_instance_folder", { instanceId: instance.id, category: tab })}>Open folder</button></div>}
         </div>
         {browsingCatalog ? catalog.total > 20 && <div className="content-pagination"><button disabled={contentPage === 1 || catalogLoading} onClick={() => setContentPage(page => page - 1)}>Previous</button><span>Page <b>{contentPage}</b> of {catalogPages}</span><button disabled={contentPage >= catalogPages || catalogLoading} onClick={() => setContentPage(page => page + 1)}>Next</button></div> : visibleItems.length > 20 && <div className="content-pagination"><button disabled={safePage === 1} onClick={() => setContentPage(safePage - 1)}>Previous</button><span>Page <b>{safePage}</b> of {pageCount}</span><button disabled={safePage === pageCount} onClick={() => setContentPage(safePage + 1)}>Next</button></div>}
         <div className="content-search"><Search size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={browsingCatalog ? `Search Modrinth ${categoryLabel.toLowerCase()}...` : `Search ${categoryLabel.toLowerCase()}...`} />{!browsingCatalog && <Select value={filter} options={["All", "Enabled", "Disabled"]} onChange={setFilter} />}</div>
@@ -2032,7 +2335,7 @@ function HatCartDrawer({ hats, open, adsVisible, confirming, onRemove, onConfirm
   </div>, document.body);
 }
 
-function HatShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: string | null; adsVisible: boolean; onSelectCategory: (category: "capes" | "hats" | "wings") => void }) {
+function HatShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: string | null; adsVisible: boolean; onSelectCategory: (category: CosmeticCategory) => void }) {
   const [view, setView] = useState<CapeShopView>("shop");
   const [catalog, setCatalog] = useState<HatCatalogItem[]>([]);
   const [accountState, setAccountState] = useState<HatAccountState>(() => loadHatAccountState(accountId));
@@ -2048,8 +2351,13 @@ function HatShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: s
     setLoading(true);
     void Promise.all([hatProvider.listCatalog(), hatProvider.loadAccountState(accountId)]).then(([items, state]) => {
       if (disposed) return;
+      const liveIds = new Set(items.map(item => item.id));
+      const reconciled = saveHatAccountState(accountId, {
+        ...state,
+        cartIds: state.cartIds.filter(id => liveIds.has(id)),
+      });
       setCatalog(items);
-      setAccountState(state);
+      setAccountState(reconciled);
       setError("");
     }).catch((reason) => { if (!disposed) setError(String(reason)); }).finally(() => { if (!disposed) setLoading(false); });
     return () => { disposed = true; };
@@ -2067,15 +2375,39 @@ function HatShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: s
     persist({ ...accountState, cartIds: [...accountState.cartIds, id] });
   };
   const addToCollection = async () => {
-    if (!accountState.cartIds.length || confirming) return;
+    const selectedHats = cartHats;
+    const selectedIds = selectedHats.map(hat => hat.id);
+    if (!selectedIds.length || confirming) return;
     setConfirming(true);
     try {
-      await hatProvider.addToCollection(accountId, accountState.cartIds);
-      persist({ ...accountState, collectionIds: [...new Set([...accountState.collectionIds, ...accountState.cartIds])], cartIds: [] });
+      await hatProvider.addToCollection(accountId, selectedIds);
+      persist({ ...accountState, collectionIds: [...new Set([...accountState.collectionIds, ...selectedIds])], cartIds: [] });
       setCartOpen(false);
       setView("equipped");
       setStatus("Hats added to your collection");
-    } catch (reason) { setStatus(String(reason)); }
+    } catch (reason) {
+      const detail = String(reason);
+      if (detail.includes("hat_not_found") || detail.includes("404 Not Found")) {
+        try {
+          const freshCatalog = await hatProvider.listCatalog(true);
+          const remappedIds = selectedHats.map(oldHat => freshCatalog.find(fresh => fresh.id === oldHat.id || (fresh.name === oldHat.name && fresh.collection === oldHat.collection))?.id).filter((id): id is string => Boolean(id));
+          setCatalog(freshCatalog);
+          if (remappedIds.length === selectedHats.length && remappedIds.length) {
+            await hatProvider.addToCollection(accountId, remappedIds);
+            persist({ ...accountState, collectionIds: [...new Set([...accountState.collectionIds, ...remappedIds])], cartIds: [] });
+            setCartOpen(false);
+            setView("equipped");
+            setStatus("Hats added to your collection");
+          } else {
+            const liveIds = new Set(freshCatalog.map(hat => hat.id));
+            persist({ ...accountState, cartIds: accountState.cartIds.filter(id => liveIds.has(id)) });
+            setStatus("That hat was removed or republished. Bloom refreshed the catalog—please add it again.");
+          }
+        } catch (refreshError) {
+          setStatus(`Bloom refreshed the hat catalog but could not finish the request: ${String(refreshError)}`);
+        }
+      } else setStatus(detail);
+    }
     finally { setConfirming(false); window.setTimeout(() => setStatus(""), 2400); }
   };
   const equip = async (id: string, colorwayId: string | null) => {
@@ -2094,7 +2426,7 @@ function HatShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: s
     <header className="cape-shop-heading"><div><span>COSMETICS</span><h1>Shop</h1><p>Explore free Bloom cosmetics and build your collection.</p></div><button className="cape-cart-button" onClick={() => setCartOpen(true)}><ShoppingCart size={19} />{accountState.cartIds.length > 0 && <b>{accountState.cartIds.length}</b>}</button></header>
     <div className="cape-shop-segments"><span className="cape-segment-indicator" style={{ transform: view === "shop" ? "translateX(0%)" : "translateX(100%)" }} /><button className={view === "shop" ? "active" : ""} onClick={() => setView("shop")}><ShoppingBag size={15} />Shop</button><button className={view === "equipped" ? "active" : ""} onClick={() => setView("equipped")}><Shirt size={15} />Equipped</button></div>
     <section className="cape-shop-workspace">
-      <aside className="cape-shop-categories"><button onClick={() => onSelectCategory("capes")}><Shirt size={17} />Capes</button><button className="active"><Crown size={17} />Hats</button><button onClick={() => onSelectCategory("wings")}><Feather size={17} />Wings</button><div><LockKeyhole size={15} /><span>More categories soon</span></div><article><ShoppingBag size={22} /><b>More cosmetics coming soon</b><span>New cosmetic types will join the collection later.</span></article></aside>
+      <CosmeticCategoryNav active="hats" onSelect={onSelectCategory} />
       <div className="cape-catalog-panel"><div className="cape-catalog-heading"><div><h2>{view === "shop" ? "Hat Collection" : "Your Hats"}</h2><p>{view === "shop" ? "All Bloom hats are free to add to your collection." : "Choose the hat shown live in Minecraft."}</p></div><span>{visible.length} {visible.length === 1 ? "hat" : "hats"}</span></div>
         <div className="cape-catalog-grid">{pageItems.length ? pageItems.map((hat) => <HatCatalogCard key={hat.id} hat={hat} view={view} inCart={accountState.cartIds.includes(hat.id)} owned={accountState.collectionIds.includes(hat.id)} equipped={accountState.equippedHatId === hat.id} equippedColorwayId={accountState.equippedHatColorwayId} onAdd={() => addToCart(hat.id)} onEquip={(colorwayId) => void equip(hat.id, colorwayId)} />) : <div className="cape-catalog-empty">{loading ? <><span className="cape-loading-mark" /><h2>Preparing hats</h2><p>Checking Bloom's private 3D cosmetic catalog…</p></> : error ? <><TriangleAlert size={31} /><h2>Hat catalog unavailable</h2><p>{error}</p></> : view === "shop" ? <><Crown size={34} /><h2>Hats coming soon</h2><p>Publish the Blockbench benchmark in Bloom Cosmetics Manager to test this path.</p></> : <><ShoppingBag size={34} /><h2>Your hat collection is empty</h2><p>Add a free hat from the Shop.</p></>}</div>}</div>
         {pageCount > 1 && <div className="cape-catalog-pages"><button disabled={page === 1} onClick={() => setPage((value) => value - 1)}>Previous</button><span>Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setPage((value) => value + 1)}>Next</button></div>}
@@ -2172,7 +2504,7 @@ function WingCartDrawer({ wings, open, adsVisible, confirming, onRemove, onConfi
   </div>, document.body);
 }
 
-function WingShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: string | null; adsVisible: boolean; onSelectCategory: (category: "capes" | "hats" | "wings") => void }) {
+function WingShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: string | null; adsVisible: boolean; onSelectCategory: (category: CosmeticCategory) => void }) {
   const [view, setView] = useState<CapeShopView>("shop");
   const [catalog, setCatalog] = useState<WingCatalogItem[]>([]);
   const [accountState, setAccountState] = useState<WingAccountState>(() => loadWingAccountState(accountId));
@@ -2234,7 +2566,7 @@ function WingShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: 
     <header className="cape-shop-heading"><div><span>COSMETICS</span><h1>Shop</h1><p>Explore free Bloom cosmetics and build your collection.</p></div><button className="cape-cart-button" onClick={() => setCartOpen(true)} aria-label={`Open wing cart with ${accountState.cartIds.length} items`}><ShoppingCart size={19} />{accountState.cartIds.length > 0 && <b>{accountState.cartIds.length}</b>}</button></header>
     <div className="cape-shop-segments"><span className="cape-segment-indicator" style={{ transform: view === "shop" ? "translateX(0%)" : "translateX(100%)" }} /><button className={view === "shop" ? "active" : ""} onClick={() => setView("shop")}><ShoppingBag size={15} />Shop</button><button className={view === "equipped" ? "active" : ""} onClick={() => setView("equipped")}><Shirt size={15} />Equipped</button></div>
     <section className="cape-shop-workspace">
-      <aside className="cape-shop-categories"><button onClick={() => onSelectCategory("capes")}><Shirt size={17} />Capes</button><button onClick={() => onSelectCategory("hats")}><Crown size={17} />Hats</button><button className="active"><Feather size={17} />Wings</button><div><LockKeyhole size={15} /><span>More categories soon</span></div><article><ShoppingBag size={22} /><b>More cosmetics coming soon</b><span>New cosmetic types will join the collection later.</span></article></aside>
+      <CosmeticCategoryNav active="wings" onSelect={onSelectCategory} />
       <div className="cape-catalog-panel"><div className="cape-catalog-heading"><div><h2>{view === "shop" ? "Wing Collection" : "Your Wings"}</h2><p>{view === "shop" ? "All Bloom wings are free to add to your collection." : "Choose the wings shown live in Minecraft."}</p></div><span>{visible.length} {visible.length === 1 ? "wing" : "wings"}</span></div>
         <div className="cape-catalog-grid">{pageItems.length ? pageItems.map((wing) => <WingCatalogCard key={wing.id} wing={wing} view={view} inCart={accountState.cartIds.includes(wing.id)} owned={accountState.collectionIds.includes(wing.id)} equipped={accountState.equippedWingId === wing.id} equippedColorwayId={accountState.equippedWingColorwayId} onAdd={() => addToCart(wing.id)} onEquip={(colorwayId) => void equip(wing.id, colorwayId)} />) : <div className="cape-catalog-empty">{loading ? <><span className="cape-loading-mark" /><h2>Preparing wings</h2><p>Checking Bloom's private 3D cosmetic catalog…</p></> : error ? <><TriangleAlert size={31} /><h2>Wing catalog unavailable</h2><p>{error}</p></> : view === "shop" ? <><Feather size={34} /><h2>Wings coming soon</h2><p>Publish the first model in Bloom Cosmetics Manager to test this path.</p></> : <><ShoppingBag size={34} /><h2>Your wing collection is empty</h2><p>Add free wings from the Shop.</p></>}</div>}</div>
         {pageCount > 1 && <div className="cape-catalog-pages"><button disabled={page === 1} onClick={() => setPage((value) => value - 1)}>Previous</button><span>Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setPage((value) => value + 1)}>Next</button></div>}
@@ -2245,8 +2577,75 @@ function WingShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: 
   </div>;
 }
 
+const braceletPreviewCache = new Map<string, string>();
+
+function BraceletTexturePreview({ bracelet, colorway }: { bracelet: BraceletCatalogItem; colorway?: CosmeticColorway | null }) {
+  const revision = colorway?.previewRevision || bracelet.previewRevision;
+  const key = `${bracelet.id}:${colorway?.id || "base"}:${revision}`;
+  const [source, setSource] = useState(() => braceletPreviewCache.get(key) || "");
+  useEffect(() => {
+    let disposed = false;
+    if (source) return;
+    void braceletProvider.loadPreviewData(bracelet.id, colorway?.id).then((preview) => {
+      if (disposed) return;
+      braceletPreviewCache.set(key, preview.dataUrl);
+      setSource(preview.dataUrl);
+    }).catch(() => { if (!disposed) setSource(""); });
+    return () => { disposed = true; };
+  }, [key, source, bracelet.id, colorway?.id]);
+  return <div className="cape-texture-preview hat-texture-preview bracelet-texture-preview">{source ? <img src={source} alt={`${bracelet.name} bracelet preview`} draggable={false} /> : <span className="cape-preview-loading"><Watch size={29} /></span>}</div>;
+}
+
+function BraceletCatalogCard({ bracelet, view, inCart, owned, equipped, equippedColorwayId, arm, onAdd, onEquip, onArm }: {
+  bracelet: BraceletCatalogItem; view: CapeShopView; inCart: boolean; owned: boolean; equipped: boolean;
+  equippedColorwayId: string | null; arm: BraceletArm; onAdd: () => void;
+  onEquip: (colorwayId: string | null) => void; onArm: (arm: BraceletArm) => void;
+}) {
+  const initial = activeColorway(bracelet, equipped ? equippedColorwayId : null);
+  const [selectedColorwayId, setSelectedColorwayId] = useState<string | null>(initial?.id || null);
+  const selected = activeColorway(bracelet, selectedColorwayId);
+  const selectedIsEquipped = equipped && (!selected || selected.id === equippedColorwayId);
+  return <article className={`cape-catalog-card bracelet-catalog-card ${equipped ? "equipped" : ""}`}>
+    <BraceletTexturePreview bracelet={bracelet} colorway={selected} />
+    <div className="cape-card-copy"><h3>{bracelet.name}</h3><p>{bracelet.collection}</p><CosmeticColorwaySwatches colorways={bracelet.colorways} selectedId={selected?.id || null} onSelect={setSelectedColorwayId} /></div>
+    {view === "equipped" && equipped && <div className="bracelet-arm-picker" role="group" aria-label="Bracelet arm"><button className={arm === "left" ? "active" : ""} onClick={() => onArm("left")}>Left</button><button className={arm === "right" ? "active" : ""} onClick={() => onArm("right")}>Right</button></div>}
+    {view === "shop" ? <button className={`cape-card-action ${owned ? "owned" : ""}`} disabled={inCart || owned} onClick={onAdd}>{owned ? <><Check size={16} strokeWidth={3.2} />Owned</> : inCart ? <><Check size={15} strokeWidth={3} />In cart</> : <><Plus size={16} strokeWidth={2.8} />Add to cart</>}</button>
+      : <button className={`cape-card-action ${selectedIsEquipped ? "active" : ""}`} onClick={() => onEquip(selected?.id || null)}>{selectedIsEquipped ? <><Check size={15} />Equipped</> : <><Watch size={15} />{equipped ? "Apply color" : "Equip"}</>}</button>}
+  </article>;
+}
+
+function BraceletShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: string | null; adsVisible: boolean; onSelectCategory: (category: CosmeticCategory) => void }) {
+  const [view, setView] = useState<CapeShopView>("shop");
+  const [catalog, setCatalog] = useState<BraceletCatalogItem[]>([]);
+  const [state, setState] = useState<BraceletAccountState>(() => loadBraceletAccountState(accountId));
+  const [loading, setLoading] = useState(true), [error, setError] = useState(""), [status, setStatus] = useState("");
+  const [cartOpen, setCartOpen] = useState(false), [confirming, setConfirming] = useState(false), [page, setPage] = useState(1);
+  useEffect(() => { let disposed = false; setLoading(true); void Promise.all([braceletProvider.listCatalog(), braceletProvider.loadAccountState(accountId)]).then(([items, next]) => { if (!disposed) { setCatalog(items); setState(next); setError(""); } }).catch((reason) => { if (!disposed) setError(String(reason)); }).finally(() => { if (!disposed) setLoading(false); }); return () => { disposed = true; }; }, [accountId]);
+  const persist = (next: BraceletAccountState) => setState(saveBraceletAccountState(accountId, next));
+  const visible = view === "shop" ? catalog : catalog.filter((item) => state.collectionIds.includes(item.id));
+  const pageCount = Math.max(1, Math.ceil(visible.length / 9));
+  const pageItems = visible.slice((page - 1) * 9, page * 9);
+  const cart = state.cartIds.map((id) => catalog.find((item) => item.id === id)).filter((item): item is BraceletCatalogItem => Boolean(item));
+  const addToCollection = async () => { if (!state.cartIds.length || confirming) return; setConfirming(true); try { await braceletProvider.addToCollection(accountId, state.cartIds); persist({ ...state, collectionIds: [...new Set([...state.collectionIds, ...state.cartIds])], cartIds: [] }); setCartOpen(false); setView("equipped"); setStatus("Bracelets added to your collection"); } catch (reason) { setStatus(String(reason)); } finally { setConfirming(false); window.setTimeout(() => setStatus(""), 2400); } };
+  const equip = async (id: string, colorwayId: string | null) => { const same = state.equippedBraceletId === id && state.equippedBraceletColorwayId === colorwayId; const nextId = same ? null : id; const nextColor = same ? null : colorwayId; try { await braceletProvider.setEquipped(accountId, nextId, nextColor, state.equippedBraceletArm); persist({ ...state, equippedBraceletId: nextId, equippedBraceletColorwayId: nextColor }); setStatus(nextId ? `Bracelet equipped on ${state.equippedBraceletArm} arm — the game updates live` : "Bracelet unequipped"); } catch (reason) { setStatus(String(reason)); } window.setTimeout(() => setStatus(""), 2200); };
+  const setArm = async (arm: BraceletArm) => { if (arm === state.equippedBraceletArm) return; try { await braceletProvider.setEquipped(accountId, state.equippedBraceletId, state.equippedBraceletColorwayId, arm); persist({ ...state, equippedBraceletArm: arm }); setStatus(`Moved to ${arm} arm — the game updates live`); } catch (reason) { setStatus(String(reason)); } window.setTimeout(() => setStatus(""), 1800); };
+  return <div className="cape-shop-page">
+    <header className="cape-shop-heading"><div><span>COSMETICS</span><h1>Shop</h1><p>Explore free Bloom cosmetics and build your collection.</p></div><button className="cape-cart-button" onClick={() => setCartOpen(true)}><ShoppingCart size={19} />{state.cartIds.length > 0 && <b>{state.cartIds.length}</b>}</button></header>
+    <div className="cape-shop-segments"><span className="cape-segment-indicator" style={{ transform: view === "shop" ? "translateX(0%)" : "translateX(100%)" }} /><button className={view === "shop" ? "active" : ""} onClick={() => setView("shop")}><ShoppingBag size={15} />Shop</button><button className={view === "equipped" ? "active" : ""} onClick={() => setView("equipped")}><Shirt size={15} />Equipped</button></div>
+    <section className="cape-shop-workspace"><CosmeticCategoryNav active="bracelets" onSelect={onSelectCategory} /><div className="cape-catalog-panel"><div className="cape-catalog-heading"><div><h2>{view === "shop" ? "Bracelet Collection" : "Your Bracelets"}</h2><p>{view === "shop" ? "All Bloom bracelets are free to add to your collection." : "Equip a bracelet and choose which arm wears it."}</p></div><span>{visible.length} {visible.length === 1 ? "bracelet" : "bracelets"}</span></div>
+      <div className="cape-catalog-grid">{pageItems.length ? pageItems.map((item) => <BraceletCatalogCard key={item.id} bracelet={item} view={view} inCart={state.cartIds.includes(item.id)} owned={state.collectionIds.includes(item.id)} equipped={state.equippedBraceletId === item.id} equippedColorwayId={state.equippedBraceletColorwayId} arm={state.equippedBraceletArm} onAdd={() => persist({ ...state, cartIds: [...state.cartIds, item.id] })} onEquip={(colorway) => void equip(item.id, colorway)} onArm={(arm) => void setArm(arm)} />) : <div className="cape-catalog-empty">{loading ? <><span className="cape-loading-mark" /><h2>Preparing bracelets</h2></> : error ? <><TriangleAlert size={31} /><h2>Bracelet catalog unavailable</h2><p>{error}</p></> : <><Watch size={34} /><h2>{view === "shop" ? "Bracelets coming soon" : "Your bracelet collection is empty"}</h2></>}</div>}</div>
+      {pageCount > 1 && <div className="cape-catalog-pages"><button disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button><span>Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setPage(page + 1)}>Next</button></div>}
+    </div></section>{status && <div className="cape-shop-status"><Check size={14} />{status}</div>}
+    {cartOpen && createPortal(<div className={`cape-cart-layer ${adsVisible ? "with-ad-rail" : "without-ad-rail"}`}><div className="cape-cart-scrim" onClick={() => setCartOpen(false)} /><aside className="cape-cart-drawer"><header><div><span>YOUR SELECTION</span><h2>Bracelet cart</h2><p>Every Bloom cosmetic is free.</p></div><button className="cape-cart-close" onClick={() => setCartOpen(false)}><CloseIcon size={18} /></button></header><div className="cape-cart-list">{cart.map((item) => <div className="cape-cart-item" key={item.id}><BraceletTexturePreview bracelet={item} /><div><b>{item.name}</b><span>{item.collection}</span></div><button onClick={() => persist({ ...state, cartIds: state.cartIds.filter((id) => id !== item.id) })}><Trash2 size={16} /></button></div>)}</div><footer><div><span>{cart.length} selected</span><b>Free</b></div><button className="cape-cart-confirm" disabled={!cart.length || confirming} onClick={() => void addToCollection()}>{confirming ? "Adding…" : "Add to collection"}<ChevronRight size={17} /></button></footer></aside></div>, document.body)}
+  </div>;
+}
+
+function CosmeticCategoryNav({ active, onSelect }: { active: CosmeticCategory; onSelect: (category: CosmeticCategory) => void }) {
+  return <aside className="cape-shop-categories"><button className={active === "capes" ? "active" : ""} onClick={() => onSelect("capes")}><Shirt size={17} />Capes</button><button className={active === "hats" ? "active" : ""} onClick={() => onSelect("hats")}><Crown size={17} />Hats</button><button className={active === "wings" ? "active" : ""} onClick={() => onSelect("wings")}><Feather size={17} />Wings</button><button className={active === "bracelets" ? "active" : ""} onClick={() => onSelect("bracelets")}><Watch size={17} />Bracelets</button><div><LockKeyhole size={15} /><span>More categories soon</span></div><article><ShoppingBag size={22} /><b>More cosmetics coming soon</b><span>New cosmetic types will join the collection later.</span></article></aside>;
+}
+
 function CapeShopPage({ accountId, adsVisible }: { accountId: string | null; adsVisible: boolean }) {
-  const [category, setCategory] = useState<"capes" | "hats" | "wings">("capes");
+  const [category, setCategory] = useState<CosmeticCategory>("capes");
   const [view, setView] = useState<CapeShopView>("shop");
   const [catalog, setCatalog] = useState<CapeCatalogItem[]>([]);
   const [accountState, setAccountState] = useState<CapeAccountState>(() => loadCapeAccountState(accountId));
@@ -2364,6 +2763,9 @@ function CapeShopPage({ accountId, adsVisible }: { accountId: string | null; ads
   if (category === "wings") {
     return <WingShopPage accountId={accountId} adsVisible={adsVisible} onSelectCategory={setCategory} />;
   }
+  if (category === "bracelets") {
+    return <BraceletShopPage accountId={accountId} adsVisible={adsVisible} onSelectCategory={setCategory} />;
+  }
 
   return <div className="cape-shop-page">
     <header className="cape-shop-heading">
@@ -2381,13 +2783,7 @@ function CapeShopPage({ accountId, adsVisible }: { accountId: string | null; ads
     </div>
 
     <section className="cape-shop-workspace">
-      <aside className="cape-shop-categories">
-        <button className="active"><Shirt size={17} />Capes</button>
-        <button onClick={() => setCategory("hats")}><Crown size={17} />Hats</button>
-        <button onClick={() => setCategory("wings")}><Feather size={17} />Wings</button>
-        <div><LockKeyhole size={15} /><span>More categories soon</span></div>
-        <article><ShoppingBag size={22} /><b>More cosmetics coming soon</b><span>New cosmetic types will join the collection later.</span></article>
-      </aside>
+      <CosmeticCategoryNav active="capes" onSelect={setCategory} />
 
       <div className="cape-catalog-panel">
         <div className="cape-catalog-heading">
@@ -2420,7 +2816,89 @@ function CapeShopPage({ accountId, adsVisible }: { accountId: string | null; ads
   </div>;
 }
 
-function InstancesPage({ instances, busy, onOpen, onPlay, onCreate }: { instances: InstanceDraft[]; busy: boolean; onOpen: (instance: InstanceDraft) => void; onPlay: (instance: InstanceDraft) => void; onCreate: () => void }) {
+type InstanceLibraryDestination = "view" | "add-mods" | "settings";
+
+function InstanceLibraryCard({ instance, busy, doubleClickToPlay, onNavigate, onPlay, onDelete }: { instance: InstanceDraft; busy: boolean; doubleClickToPlay: boolean; onNavigate: (instance: InstanceDraft, destination: InstanceLibraryDestination) => void; onPlay: (instance: InstanceDraft) => void; onDelete: (instance: InstanceDraft) => Promise<void> }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0, width: 190 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const openTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
+  }, []);
+  useEffect(() => {
+    if (!menuOpen) { setConfirmDelete(false); return; }
+    const place = () => {
+      const bounds = triggerRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const width = 190;
+      const menuHeight = 188;
+      const top = bounds.bottom + menuHeight <= window.innerHeight - 8 ? bounds.bottom : Math.max(8, bounds.top - menuHeight);
+      setPosition({ top, left: Math.max(8, Math.min(bounds.right - width, window.innerWidth - width - 8)), width });
+    };
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) setMenuOpen(false);
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    document.addEventListener("pointerdown", dismiss);
+    return () => { window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); document.removeEventListener("pointerdown", dismiss); };
+  }, [menuOpen]);
+  useEffect(() => { if (menuOpen && menuRef.current) revealDropdown(menuRef.current); }, [menuOpen]);
+  const navigate = (destination: InstanceLibraryDestination) => { setMenuOpen(false); onNavigate(instance, destination); };
+  const remove = async () => {
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    setDeleting(true);
+    try { await onDelete(instance); } finally { setDeleting(false); }
+  };
+  const openCard = (event: MouseEvent<HTMLElement>) => {
+    if (!doubleClickToPlay) { onNavigate(instance, "view"); return; }
+    if (event.detail !== 1) return;
+    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
+    openTimer.current = window.setTimeout(() => {
+      openTimer.current = null;
+      onNavigate(instance, "view");
+    }, 240);
+  };
+  const playFromDoubleClick = (event: MouseEvent<HTMLElement>) => {
+    if (!doubleClickToPlay) return;
+    event.preventDefault();
+    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
+    openTimer.current = null;
+    onPlay(instance);
+  };
+  return <article className="instance-library-card" onClick={openCard} onDoubleClick={playFromDoubleClick}>
+    <div className="library-card-identity"><div className="library-card-top"><span className="library-instance-icon">{instance.icon ? <img src={instance.icon} alt="" /> : <span aria-hidden="true">?</span>}</span><LoaderLogo loader={instance.loader} /></div>
+    <div className="library-card-copy"><h2>{instance.name}</h2><p>Minecraft {instance.version}</p><small title={instance.directory}>{instance.directory}</small></div></div>
+    <div className="library-card-actions"><button className="library-play" disabled={busy} onClick={(event) => { event.stopPropagation(); onPlay(instance); }}><Play size={15} fill="currentColor" />Play</button><button className="library-folder" onClick={(event) => { event.stopPropagation(); void invoke("open_instance_folder", { instanceId: instance.id }); }} aria-label={`Open ${instance.name} folder`}><span className="animated-folder"><Folder className="folder-closed" size={17} /><FolderOpen className="folder-open" size={17} /></span></button><button ref={triggerRef} className="library-more" onClick={(event) => { event.stopPropagation(); setMenuOpen(value => !value); }} aria-label={`Actions for ${instance.name}`} aria-expanded={menuOpen}><MoreHorizontal size={18} /></button></div>
+    {menuOpen && createPortal(<div ref={menuRef} className="select-menu select-menu-portal instance-library-menu" style={{ ...closedDropdownStyle, position: "fixed", top: position.top, left: position.left, right: "auto", width: position.width }} onClick={(event) => event.stopPropagation()}>
+      <button style={{ opacity: 0 }} onClick={() => navigate("view")}><Layers3 size={15} />View instance</button>
+      <button style={{ opacity: 0 }} onClick={() => navigate("add-mods")}><Puzzle size={15} />Add mods</button>
+      <button style={{ opacity: 0 }} onClick={() => navigate("settings")}><SettingsIcon size={15} />Settings</button>
+      <button style={{ opacity: 0 }} className={`instance-delete-action ${confirmDelete ? "confirm" : ""}`} disabled={deleting || busy} onClick={() => void remove()}><Trash2 size={15} />{deleting ? "Deleting…" : confirmDelete ? "Confirm delete" : "Delete instance"}</button>
+    </div>, document.body)}
+  </article>;
+}
+
+function LoaderLogo({ loader }: { loader: string }) {
+  const [failed, setFailed] = useState(false);
+  const fabric = loader.toLowerCase().includes("fabric");
+  // Packaged Tauri builds may use a local file/asset origin. Resolving from
+  // document.baseURI keeps these bundled images beside index.html instead of
+  // accidentally pointing at the protocol or Windows drive root.
+  const source = new URL(fabric ? "loader-fabric.png" : "loader-vanilla.png", document.baseURI).href;
+  if (failed) {
+    return <span className="library-loader-logo library-loader-logo-fallback" aria-label={`${loader} loader`} title={`${loader} loader`}>{fabric ? <Feather size={19} /> : <Cuboid size={19} />}</span>;
+  }
+  return <img className="library-loader-logo" src={source} alt={`${loader} loader`} onError={() => setFailed(true)} />;
+}
+
+function InstancesPage({ instances, busy, doubleClickToPlay, onOpen, onDelete, onPlay, onCreate }: { instances: InstanceDraft[]; busy: boolean; doubleClickToPlay: boolean; onOpen: (instance: InstanceDraft, destination: InstanceLibraryDestination) => void; onDelete: (instance: InstanceDraft) => Promise<void>; onPlay: (instance: InstanceDraft) => void; onCreate: () => void }) {
   const [query, setQuery] = useState("");
   const [loader, setLoader] = useState("All");
   const visible = instances.filter((instance) => instance.name.toLowerCase().includes(query.toLowerCase()) && (loader === "All" || instance.loader.toLowerCase() === loader.toLowerCase()));
@@ -2428,11 +2906,7 @@ function InstancesPage({ instances, busy, onOpen, onPlay, onCreate }: { instance
   return <div className="instances-page">
     <header className="instances-page-heading"><div><span className="instances-eyebrow">YOUR LIBRARY</span><h1>All Instances</h1><p>Every world, pack, and client setup in one place.</p></div><button className="instances-create" onClick={onCreate}><CirclePlus size={17} />New instance</button></header>
     <section className="instances-toolbar"><div className="instances-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your instances..." /></div><Select value={loader} options={loaders} onChange={setLoader} variant="filter" /><span className="instances-count">{visible.length} {visible.length === 1 ? "instance" : "instances"}</span></section>
-    {visible.length ? <div className="instances-grid">{visible.map((instance) => <article className="instance-library-card" key={instance.id} onClick={() => onOpen(instance)}>
-      <div className="library-card-top"><span className="library-instance-icon">{instance.icon ? <img src={instance.icon} alt="" /> : <span aria-hidden="true">?</span>}</span><img className="library-loader-logo" src={instance.loader.toLowerCase().includes("fabric") ? "/loader-fabric.png" : "/loader-vanilla.png"} alt={`${instance.loader} loader`} /></div>
-      <div className="library-card-copy"><h2>{instance.name}</h2><p>Minecraft {instance.version}</p><small title={instance.directory}>{instance.directory}</small></div>
-      <div className="library-card-actions"><button className="library-play" disabled={busy} onClick={(event) => { event.stopPropagation(); onPlay(instance); }}><Play size={15} fill="currentColor" />Play</button><button className="library-folder" onClick={(event) => { event.stopPropagation(); void invoke("open_instance_folder", { instanceId: instance.id }); }} aria-label={`Open ${instance.name} folder`}><span className="animated-folder"><Folder className="folder-closed" size={17} /><FolderOpen className="folder-open" size={17} /></span></button></div>
-    </article>)}</div> : <div className="instances-empty"><Cuboid size={30} /><h2>{instances.length ? "No matching instances" : "Your library is empty"}</h2><p>{instances.length ? "Try another name or loader filter." : "Create your first instance to start building your library."}</p>{!instances.length && <button onClick={onCreate}><CirclePlus size={16} />New instance</button>}</div>}
+    {visible.length ? <div className="instances-grid">{visible.map((instance) => <InstanceLibraryCard key={instance.id} instance={instance} busy={busy} doubleClickToPlay={doubleClickToPlay} onNavigate={onOpen} onDelete={onDelete} onPlay={onPlay} />)}</div> : <div className="instances-empty"><Cuboid size={30} /><h2>{instances.length ? "No matching instances" : "Your library is empty"}</h2><p>{instances.length ? "Try another name or loader filter." : "Create your first instance to start building your library."}</p>{!instances.length && <button onClick={onCreate}><CirclePlus size={16} />New instance</button>}</div>}
   </div>;
 }
 
@@ -2459,12 +2933,126 @@ function DownloadsPage({ download, instances, completed, onClear, onCancel }: { 
   </div>;
 }
 
+function SpotlightInstanceSelect({
+  instances,
+  selected,
+  onSelect,
+}: {
+  instances: InstanceDraft[];
+  selected: InstanceDraft;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0, width: 320 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const bounds = triggerRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      setPosition({
+        top: bounds.bottom - 1,
+        left: Math.max(8, Math.min(bounds.left + 5, window.innerWidth - bounds.width + 2)),
+        width: Math.max(140, bounds.width - 10),
+      });
+    };
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    document.addEventListener("pointerdown", closeOutside);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+      document.removeEventListener("pointerdown", closeOutside);
+    };
+  }, [open]);
+  useEffect(() => {
+    if (open && menuRef.current) revealDropdown(menuRef.current);
+  }, [open, instances.length]);
+
+  return (
+    <div className="spotlight-instance-picker">
+      <button ref={triggerRef} className="spotlight-select-trigger" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span><b>{selected.name}</b><small>{selected.version} • {selected.loader}</small></span>
+        <ChevronDown size={17} className={open ? "rotated" : ""} />
+      </button>
+      {open && createPortal(
+        <div ref={menuRef} className="select-menu select-menu-portal spotlight-select-menu" style={{ ...closedDropdownStyle, position: "fixed", top: position.top, left: position.left, right: "auto", width: position.width }}>
+          {instances.map((instance) => (
+            <button style={{ opacity: 0 }} className={instance.id === selected.id ? "chosen" : ""} key={instance.id} onClick={() => { onSelect(instance.id); setOpen(false); }}>
+              <b>{instance.name}</b><small>{instance.version} • {instance.loader}</small>
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+function SpotlightHome({
+  instances,
+  selectedId,
+  profileName,
+  busy,
+  onSelect,
+  onPlay,
+  onCreate,
+}: {
+  instances: InstanceDraft[];
+  selectedId: string | null;
+  profileName: string;
+  busy: boolean;
+  onSelect: (id: string) => void;
+  onPlay: (instance: InstanceDraft) => void;
+  onCreate: () => void;
+}) {
+  const selected = instances.find(instance => instance.id === selectedId) || instances[0] || null;
+  return (
+    <section className="spotlight-home">
+      <div className="spotlight-stage">
+        <div className="spotlight-center">
+          <span className="spotlight-kicker">Welcome back, {profileName}</span>
+          <h1>Ready when you are.</h1>
+          <p>Choose an instance and jump straight into Minecraft.</p>
+          {selected ? (
+            <div className="spotlight-launch-controls">
+              <button className="spotlight-play" disabled={busy} onClick={() => onPlay(selected)}>
+                <Play size={22} fill="currentColor" />
+                <span>
+                  <b>Play {selected.name}</b>
+                  <small>{selected.version} • {selected.loader}</small>
+                </span>
+              </button>
+              <SpotlightInstanceSelect instances={instances} selected={selected} onSelect={onSelect} />
+            </div>
+          ) : (
+            <button className="spotlight-play spotlight-create" onClick={onCreate}>
+              <CirclePlus size={21} />
+              <span><b>Create your first instance</b><small>Set up Minecraft to start playing</small></span>
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function App() {
   const [page, setPage] = useState<"home" | "settings" | "autotune" | "new-instance" | "downloads" | "logs" | "instance" | "instances" | "shop" | "locker">(
     (() => { try { const saved = { ...defaults, ...JSON.parse(localStorage.getItem("bloom-settings") || "{}") } as SettingsState; if (saved.startupBehavior === "Open Settings") return "settings"; if (saved.startupBehavior === "Remember last page") return (localStorage.getItem("bloom-last-page") as "home" | "settings" | "autotune" | "new-instance" | "downloads" | "logs" | "instance" | "instances" | "shop" | "locker") || "home"; } catch {} return "home"; })(),
   );
   const [instances, setInstances] = useState<InstanceDraft[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+  const [instanceDestination, setInstanceDestination] = useState<InstanceLibraryDestination>("view");
+  const instanceOpenTimers = useRef(new Map<string, number>());
+  const [spotlightInstanceId, setSpotlightInstanceId] = useState<string | null>(() => localStorage.getItem("bloom-spotlight-instance"));
   const [download, setDownload] = useState<DownloadViewState>({
     active: false,
     progress: 0,
@@ -2495,6 +3083,7 @@ function App() {
     }
   });
   const [profileIcon, setProfileIcon] = useState<string | null>(() => localStorage.getItem("bloom-profile-icon"));
+  const [customBackgroundImage, setCustomBackgroundImage] = useState<string | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [accounts, setAccounts] = useState<MinecraftProfile[]>([]);
   const [pendingAccountId, setPendingAccountId] = useState<string | null>(null);
@@ -2507,14 +3096,28 @@ function App() {
   } | null>(null);
   const [settings, setSettings] = useState<SettingsState>(() => {
     try {
-      return {
+      const loaded = {
         ...defaults,
         ...JSON.parse(localStorage.getItem("bloom-settings") || "{}"),
-      };
+      } as SettingsState;
+      if (localStorage.getItem(spotlightDefaultMigrationKey) !== "complete") {
+        const migrated = { ...loaded, homeLayout: "Spotlight" as HomeLayout };
+        localStorage.setItem("bloom-settings", JSON.stringify(migrated));
+        localStorage.setItem(spotlightDefaultMigrationKey, "complete");
+        return migrated;
+      }
+      return loaded;
     } catch {
       return defaults;
     }
   });
+  useEffect(() => () => {
+    instanceOpenTimers.current.forEach((timer) => window.clearTimeout(timer));
+    instanceOpenTimers.current.clear();
+  }, []);
+  useEffect(() => {
+    void invoke<string | null>("load_custom_background").then(setCustomBackgroundImage).catch(() => {});
+  }, []);
   useEffect(() => {
     localStorage.setItem("bloom-settings", JSON.stringify(settings));
     document.documentElement.style.setProperty("--accent", settings.accent);
@@ -2554,6 +3157,10 @@ function App() {
     return () => document.removeEventListener("pointerdown", press);
   }, []);
   useEffect(() => { if (page !== "new-instance" && page !== "instance") localStorage.setItem("bloom-last-page", page); }, [page]);
+  useEffect(() => {
+    if (spotlightInstanceId) localStorage.setItem("bloom-spotlight-instance", spotlightInstanceId);
+    else localStorage.removeItem("bloom-spotlight-instance");
+  }, [spotlightInstanceId]);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     void getCurrentWindow().onCloseRequested(async event => {
@@ -2775,21 +3382,14 @@ function App() {
       if (download.state === "idle") setRingProgress(0);
       return;
     }
-    let frame = 0;
-    const draw = () => {
-      setRingProgress(current => {
-        const target = Math.max(1, download.progress);
-        if (current >= target) return current;
-        frame = window.requestAnimationFrame(draw);
-        return Math.min(target, current + Math.max(1, (target - current) * 0.1));
-      });
-    };
-    frame = window.requestAnimationFrame(draw);
-    return () => window.cancelAnimationFrame(frame);
+    // Native install phases can legitimately report a lower percentage when
+    // moving into a new phase. Mirror that real value instead of retaining a
+    // stale high-water mark from the previous phase or task.
+    setRingProgress(Math.max(0, Math.min(100, download.progress)));
   }, [download.active, download.progress, download.state]);
   useEffect(() => {
     if ((download.state !== "running" && download.state !== "complete") || ringProgress < 99) return;
-    const timer = window.setTimeout(() => setDownload(current => ({ ...current, active: false })), 1250);
+    const timer = window.setTimeout(() => setDownload(current => ({ ...current, active: false })), 3000);
     return () => window.clearTimeout(timer);
   }, [download.state, ringProgress]);
   useEffect(() => {
@@ -2830,6 +3430,30 @@ function App() {
       setDownload({ active: false, progress: 0, state: "idle", message: "" });
       window.setTimeout(() => setToast(""), 5000);
     }
+  };
+  const openInstancePage = (instance: InstanceDraft) => {
+    setSelectedInstanceId(instance.id);
+    setInstanceDestination("view");
+    setPage("instance");
+  };
+  const handleInstanceClick = (event: MouseEvent<HTMLElement>, instance: InstanceDraft) => {
+    if (!settings.doubleClickToPlay) { openInstancePage(instance); return; }
+    if (event.detail !== 1) return;
+    const previous = instanceOpenTimers.current.get(instance.id);
+    if (previous !== undefined) window.clearTimeout(previous);
+    const timer = window.setTimeout(() => {
+      instanceOpenTimers.current.delete(instance.id);
+      openInstancePage(instance);
+    }, 240);
+    instanceOpenTimers.current.set(instance.id, timer);
+  };
+  const handleInstanceDoubleClick = (event: MouseEvent<HTMLElement>, instance: InstanceDraft) => {
+    if (!settings.doubleClickToPlay) return;
+    event.preventDefault();
+    const timer = instanceOpenTimers.current.get(instance.id);
+    if (timer !== undefined) window.clearTimeout(timer);
+    instanceOpenTimers.current.delete(instance.id);
+    void launch(instance);
   };
   const installContent = async (instance: InstanceDraft, item: CatalogItem, category: Exclude<InstanceTab, "settings">) => {
     if (gameRunning) throw new Error("Close Minecraft before installing new instance content.");
@@ -2902,9 +3526,19 @@ function App() {
     try { await invoke("repair_minecraft_installation", { instanceId: mostRecentInstance.id }); }
     catch (error) { setDownload({ active: false, progress: 0, state: "idle", message: "" }); showToolMessage(String(error), "error"); }
   };
+  const customBackgroundActive = settings.customBackground && Boolean(customBackgroundImage);
+  const customBackgroundStyle = {
+    "--custom-background-image": customBackgroundImage ? `url(${customBackgroundImage})` : "none",
+    "--custom-background-opacity": String(Math.max(0, Math.min(100, settings.backgroundOpacity)) / 100),
+    "--sidebar-surface-opacity": `${Math.max(0, Math.min(100, settings.sidebarOpacity))}%`,
+  } as CSSProperties;
   return (
     <div
       className="app-shell"
+      style={customBackgroundStyle}
+      data-custom-background={customBackgroundActive ? "on" : "off"}
+      data-blurred-sidebars={customBackgroundActive && settings.blurredSidebars ? "on" : "off"}
+      data-blurred-buttons={customBackgroundActive && settings.blurredButtons ? "on" : "off"}
       onContextMenu={handleContextMenu}
       onClick={() => { setContextMenu(null); setProfileMenuOpen(false); }}
       onKeyDown={handleKeyDown}
@@ -2976,7 +3610,8 @@ function App() {
               <button
                 className={`sidebar-instance ${page === "instance" && selectedInstanceId === instance.id ? "active" : ""}`}
                 key={instance.id}
-                onClick={() => { setSelectedInstanceId(instance.id); setPage("instance"); }}
+                onClick={(event) => handleInstanceClick(event, instance)}
+                onDoubleClick={(event) => handleInstanceDoubleClick(event, instance)}
               >
                 {instance.icon ? <img className="sidebar-instance-icon" src={instance.icon} alt="" /> : <span className="instance-placeholder-icon" aria-hidden="true">?</span>}
                 <span>
@@ -2993,9 +3628,12 @@ function App() {
           )}
         </div>
         <div className="sidebar-spacer" />
-        <button className={`sidebar-link downloads-link ${page === "downloads" ? "active" : ""}`} onClick={() => setPage("downloads")}>
+        <button className={`sidebar-link downloads-link ${page === "downloads" ? "active" : ""} ${download.active ? "has-progress" : ""}`} onClick={() => setPage("downloads")}>
           <Download size={17} />
-          Downloads {download.active && <span className={`download-ring ${(download.state === "running" || download.state === "complete") && ringProgress >= 99 ? "complete" : ""}`} style={{ "--download-progress": `${ringProgress}%` } as CSSProperties}>{(download.state === "running" || download.state === "complete") && ringProgress >= 99 && <Check size={12} />}</span>}
+          Downloads {download.active && (() => {
+            const complete = (download.state === "running" || download.state === "complete") && ringProgress >= 99;
+            return <span className={`download-ring ${complete ? "complete" : ""}`} aria-label={complete ? "Download complete" : `${Math.round(ringProgress)} percent downloaded`}>{complete ? <Check size={14} strokeWidth={3} /> : <b>{Math.max(1, Math.min(99, Math.round(ringProgress)))}</b>}</span>;
+          })()}
         </button>
         <button className={`sidebar-link ${page === "logs" ? "active" : ""}`} onClick={() => setPage("logs")}>
           <TerminalSquare size={17} />
@@ -3046,13 +3684,13 @@ function App() {
       </aside>
       <main className={`content ${page === "shop" ? "shop-content" : ""}`}>
         {page === "instance" && selectedInstance ? (
-          <InstancePage instance={selectedInstance} busy={download.active || gameRunning} onPlay={() => void launch(selectedInstance)} onInstallContent={(item, category) => installContent(selectedInstance, item, category)} onChanged={(changed) => setInstances(current => current.map(instance => instance.id === changed.id ? changed : instance))} />
+          <InstancePage key={`${selectedInstance.id}:${instanceDestination}`} instance={selectedInstance} busy={download.active || gameRunning} initialTab={instanceDestination === "settings" ? "settings" : "mods"} initialCatalog={instanceDestination === "add-mods"} onPlay={() => void launch(selectedInstance)} onInstallContent={(item, category) => installContent(selectedInstance, item, category)} onChanged={(changed) => setInstances(current => current.map(instance => instance.id === changed.id ? changed : instance))} />
         ) : page === "logs" ? (
           <LogsPage entries={logs} running={gameRunning || download.state === "launching"} onClear={() => setLogs([])} />
         ) : page === "autotune" ? (
           <AutoTuneFlow />
         ) : page === "instances" ? (
-          <InstancesPage instances={instances} busy={download.active || gameRunning} onCreate={() => setPage("new-instance")} onPlay={(instance) => void launch(instance)} onOpen={(instance) => { setSelectedInstanceId(instance.id); setPage("instance"); }} />
+          <InstancesPage instances={instances} busy={download.active || gameRunning} doubleClickToPlay={settings.doubleClickToPlay} onCreate={() => setPage("new-instance")} onPlay={(instance) => void launch(instance)} onOpen={(instance, destination) => { setSelectedInstanceId(instance.id); setInstanceDestination(destination); setPage("instance"); }} onDelete={async (instance) => { try { await invoke("delete_instance", { instanceId: instance.id }); setInstances(current => current.filter(item => item.id !== instance.id)); if (selectedInstanceId === instance.id) setSelectedInstanceId(null); if (spotlightInstanceId === instance.id) { setSpotlightInstanceId(null); localStorage.removeItem("bloom-spotlight-instance"); } setToastKind("notification"); setToast(`${instance.name} and all of its files were deleted.`); window.setTimeout(() => setToast(""), 3500); } catch (error) { setToastKind("error"); setToast(String(error)); window.setTimeout(() => setToast(""), 5000); throw error; } }} />
         ) : page === "shop" ? (
           <CapeShopPage accountId={profile?.id || null} adsVisible={settings.recommendations} />
         ) : page === "locker" ? (
@@ -3060,7 +3698,7 @@ function App() {
         ) : page === "downloads" ? (
           <DownloadsPage download={download} instances={instances} completed={completedDownloads} onClear={() => setCompletedDownloads([])} onCancel={() => void invoke("cancel_minecraft_launch")} />
         ) : page === "settings" ? (
-          <SettingsPage settings={settings} setSettings={setSettings} onSignOut={signOut} profile={profile} profileIcon={profileIcon} onProfileIconChange={setProfileIcon} initialTab={settingsTarget} navigationKey={settingsNavigationKey} currentVersion={currentVersion} availableVersion={availableUpdate?.version || null} updateChecking={updateChecking} onCheckUpdates={() => void checkForUpdates(true)} onOpenUpdate={() => setUpdatePanelOpen(true)} accounts={accounts} switchingAccount={switchingAccount} onSwitchAccount={switchAccount} onAccountAdded={(next) => { setProfile(next); void refreshAccounts(); }} />
+          <SettingsPage settings={settings} setSettings={setSettings} onSignOut={signOut} profile={profile} profileIcon={profileIcon} onProfileIconChange={setProfileIcon} backgroundImage={customBackgroundImage} onBackgroundImageChange={setCustomBackgroundImage} initialTab={settingsTarget} navigationKey={settingsNavigationKey} currentVersion={currentVersion} availableVersion={availableUpdate?.version || null} updateChecking={updateChecking} onCheckUpdates={() => void checkForUpdates(true)} onOpenUpdate={() => setUpdatePanelOpen(true)} accounts={accounts} switchingAccount={switchingAccount} onSwitchAccount={switchAccount} onAccountAdded={(next) => { setProfile(next); void refreshAccounts(); }} />
         ) : page === "new-instance" ? (
           <NewInstancePage
             defaults={settings}
@@ -3069,6 +3707,16 @@ function App() {
               void invoke<InstanceDraft[]>("list_instances").then(setInstances);
               setPage(destination);
             }}
+          />
+        ) : settings.homeLayout === "Spotlight" ? (
+          <SpotlightHome
+            instances={instances}
+            selectedId={spotlightInstanceId}
+            profileName={profile?.name || "User"}
+            busy={download.active || gameRunning}
+            onSelect={setSpotlightInstanceId}
+            onPlay={(instance) => void launch(instance)}
+            onCreate={() => setPage("new-instance")}
           />
         ) : (
           <>
@@ -3122,7 +3770,7 @@ function App() {
                 </div>
                 {instances.length
                   ? instances.slice(0, 4).map((instance) => (
-                      <div className="instance-card" key={instance.id} onClick={() => { setSelectedInstanceId(instance.id); setPage("instance"); }}>
+                      <div className="instance-card" key={instance.id} onClick={(event) => handleInstanceClick(event, instance)} onDoubleClick={(event) => handleInstanceDoubleClick(event, instance)}>
                         {instance.icon ? <img className="recent-instance-icon" src={instance.icon} alt="" /> : <span className="instance-placeholder-icon" aria-hidden="true">?</span>}
                         <div>
                           <b>{instance.name}</b>
