@@ -3073,7 +3073,7 @@ function App() {
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateError, setUpdateError] = useState("");
   const updateCheckStarted = useRef(false);
-  const [logs, setLogs] = useState<LogEntry[]>(() => { try { return JSON.parse(localStorage.getItem("bloom-live-logs") || "[]").slice(-600); } catch { return []; } });
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [signInOpen, setSignInOpen] = useState(false);
   const [profile, setProfile] = useState<MinecraftProfile | null>(() => {
     try {
@@ -3116,7 +3116,25 @@ function App() {
     instanceOpenTimers.current.clear();
   }, []);
   useEffect(() => {
-    void invoke<string | null>("load_custom_background").then(setCustomBackgroundImage).catch(() => {});
+    if (!settings.customBackground) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void invoke<string | null>("load_custom_background")
+        .then(image => { if (!cancelled) setCustomBackgroundImage(image); })
+        .catch(() => {});
+    }, 350);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [settings.customBackground]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const saved = JSON.parse(localStorage.getItem("bloom-live-logs") || "[]") as LogEntry[];
+        if (Array.isArray(saved) && saved.length) {
+          setLogs(current => [...saved, ...current].slice(-600));
+        }
+      } catch {}
+    }, 500);
+    return () => window.clearTimeout(timer);
   }, []);
   useEffect(() => {
     localStorage.setItem("bloom-settings", JSON.stringify(settings));
@@ -3195,10 +3213,15 @@ function App() {
     }
   };
   useEffect(() => {
-    void getVersion().then(setCurrentVersion).catch(() => {});
-    if (updateCheckStarted.current) return;
-    updateCheckStarted.current = true;
-    if (settings.updates) void checkForUpdates(false);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      void getVersion().then(setCurrentVersion).catch(() => {});
+      if (updateCheckStarted.current) return;
+      updateCheckStarted.current = true;
+      if (settings.updates) void checkForUpdates(false);
+    }, 1800);
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, []);
 
   const installUpdate = async () => {
@@ -3231,9 +3254,15 @@ function App() {
     if (updatePhase !== "ready") return;
     setUpdatePanelOpen(false);
   };
-  useEffect(() => monitorBackend((status) => {
-    document.documentElement.dataset.backend = status?.status === "ok" ? "online" : "offline";
-  }), []);
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    const timer = window.setTimeout(() => {
+      stop = monitorBackend((status) => {
+        document.documentElement.dataset.backend = status?.status === "ok" ? "online" : "offline";
+      });
+    }, 2400);
+    return () => { window.clearTimeout(timer); stop?.(); };
+  }, []);
   useEffect(() => {
     if (profile) localStorage.setItem("bloom-profile", JSON.stringify(profile));
     else localStorage.removeItem("bloom-profile");
@@ -3250,8 +3279,8 @@ function App() {
     return active;
   };
   useEffect(() => {
-    void refreshAccounts()
-      .catch(() => {});
+    const timer = window.setTimeout(() => { void refreshAccounts().catch(() => {}); }, 250);
+    return () => window.clearTimeout(timer);
   }, []);
   useEffect(() => {
     void invoke<InstanceDraft[]>("list_instances").then(setInstances);

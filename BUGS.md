@@ -207,3 +207,13 @@ Use the next ID and record the same fields every time:
 - **Fix:** The sidebar badge now mirrors the current native progress value exactly, clamps it to `0–100`, and accepts legitimate phase decreases instead of retaining stale progress.
 - **Verification:** Launch an instance requiring downloads and compare the sidebar number with the Downloads page throughout every phase; the rounded integer values must remain synchronized.
 - **Do not repeat:** Do not smooth staged download progress with logic that only allows increases unless the backend supplies one globally monotonic aggregate percentage.
+
+## BLOOM-021 — Startup displayed a white screen for roughly 15 seconds
+
+- **Status:** Fixed
+- **Area:** Application startup
+- **Symptom:** Both installed and development builds could sit on a blank white window for roughly 15 seconds before Bloom Client appeared.
+- **Root cause:** The webview had no native or inline dark first frame, while update, backend, account, background-image, and persisted-log restoration all began during the initial startup window. The automatic update request also uses a 15-second network timeout.
+- **Fix:** The native window and initial HTML now paint black immediately with a lightweight Bloom loading frame. External update/backend checks and nonessential local restoration are deferred until after the client has rendered; large custom backgrounds are loaded only when that feature is enabled.
+- **Verification:** TypeScript and a full debug Tauri build complete successfully. Test the installed update by cold-opening Bloom several times; the dark first frame should appear immediately and navigation should become available without waiting for update or backend requests.
+- **Do not repeat:** Never place network checks or large persisted-data restoration on Bloom's first-paint path, and never rely on bundled CSS alone to color the webview before the frontend loads.
