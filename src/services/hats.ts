@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CosmeticColorway } from "./cosmetics";
+import {
+  cosmeticAccountKey,
+  createKeyedRequestCache,
+  createSingletonRequestCache,
+  readCosmeticAccounts,
+  uniqueStringIds,
+} from "./cosmeticCache";
 
 export type HatCatalogItem = {
   id: string;
@@ -24,40 +31,32 @@ export type HatAccountState = {
 };
 
 type RemoteHatAccountState = { collectionIds: string[]; equippedHatId: string | null; equippedHatColorwayId: string | null };
-type HatStorageDocument = { schemaVersion: 1; accounts: Record<string, HatAccountState> };
 
 const STORAGE_KEY = "bloom-hats-v1";
 const CATALOG_CACHE_MS = 15_000;
 const ACCOUNT_CACHE_MS = 30_000;
 const emptyState = (): HatAccountState => ({ cartIds: [], collectionIds: [], equippedHatId: null, equippedHatColorwayId: null });
-const accountKey = (accountId: string | null) => accountId?.replaceAll("-", "").toLowerCase() || "signed-out";
-let catalogCache: { expiresAt: number; items: HatCatalogItem[] } | null = null;
-let catalogRequest: Promise<HatCatalogItem[]> | null = null;
+const loadCachedCatalog = createSingletonRequestCache<HatCatalogItem[]>(CATALOG_CACHE_MS);
+const loadCachedPreview = createKeyedRequestCache<HatPreviewData>(5 * 60_000);
 const accountCache = new Map<string, { expiresAt: number; state: HatAccountState }>();
 const accountRequests = new Map<string, Promise<HatAccountState>>();
 
-const readDocument = (): HatStorageDocument => {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "") as HatStorageDocument;
-    if (parsed?.schemaVersion === 1 && parsed.accounts && typeof parsed.accounts === "object") return parsed;
-  } catch { /* A damaged local cache should never block the shop. */ }
-  return { schemaVersion: 1, accounts: {} };
-};
+const readDocument = () => readCosmeticAccounts<HatAccountState>(STORAGE_KEY);
 
 const sanitize = (value: Partial<HatAccountState> | undefined): HatAccountState => {
-  const collectionIds = Array.isArray(value?.collectionIds) ? [...new Set(value.collectionIds.filter((id): id is string => typeof id === "string"))] : [];
-  const cartIds = Array.isArray(value?.cartIds) ? [...new Set(value.cartIds.filter((id): id is string => typeof id === "string" && !collectionIds.includes(id)))] : [];
+  const collectionIds = uniqueStringIds(value?.collectionIds);
+  const cartIds = uniqueStringIds(value?.cartIds).filter(id => !collectionIds.includes(id));
   const equippedHatId = typeof value?.equippedHatId === "string" && collectionIds.includes(value.equippedHatId) ? value.equippedHatId : null;
   const equippedHatColorwayId = equippedHatId && typeof value?.equippedHatColorwayId === "string" ? value.equippedHatColorwayId : null;
   return { cartIds, collectionIds, equippedHatId, equippedHatColorwayId };
 };
 
-export const loadHatAccountState = (accountId: string | null) => sanitize(readDocument().accounts[accountKey(accountId)] || emptyState());
+export const loadHatAccountState = (accountId: string | null) => sanitize(readDocument().accounts[cosmeticAccountKey(accountId)] || emptyState());
 
 export const saveHatAccountState = (accountId: string | null, state: HatAccountState) => {
   const document = readDocument();
   const next = sanitize(state);
-  const key = accountKey(accountId);
+  const key = cosmeticAccountKey(accountId);
   document.accounts[key] = next;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(document));
   accountCache.set(key, { expiresAt: Date.now() + ACCOUNT_CACHE_MS, state: next });
@@ -65,22 +64,13 @@ export const saveHatAccountState = (accountId: string | null, state: HatAccountS
 };
 
 const listCatalog = (force = false) => {
-  if (force) catalogCache = null;
-  if (catalogCache && catalogCache.expiresAt > Date.now()) return Promise.resolve(catalogCache.items);
-  if (catalogRequest) return catalogRequest;
-  catalogRequest = invoke<HatCatalogItem[]>("list_bloom_hats")
-    .then((items) => {
-      catalogCache = { expiresAt: Date.now() + CATALOG_CACHE_MS, items };
-      return items;
-    })
-    .finally(() => { catalogRequest = null; });
-  return catalogRequest;
+  return loadCachedCatalog(() => invoke<HatCatalogItem[]>("list_bloom_hats"), force);
 };
 
 const loadAccountState = (accountId: string | null) => {
   const local = loadHatAccountState(accountId);
   if (!accountId) return Promise.resolve(local);
-  const key = accountKey(accountId);
+  const key = cosmeticAccountKey(accountId);
   const cached = accountCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.state);
   const active = accountRequests.get(key);
@@ -98,7 +88,10 @@ const loadAccountState = (accountId: string | null) => {
 
 export const hatProvider = {
   listCatalog,
-  loadPreviewData: (hatId: string, colorwayId?: string | null) => invoke<HatPreviewData>("load_bloom_hat_preview_data", { hatId, colorwayId: colorwayId || null }),
+  loadPreviewData: (hatId: string, colorwayId?: string | null) => loadCachedPreview(
+    `${hatId}:${colorwayId || "default"}`,
+    () => invoke<HatPreviewData>("load_bloom_hat_preview_data", { hatId, colorwayId: colorwayId || null }),
+  ),
   loadAccountState,
   addToCollection: (_accountId: string | null, hatIds: string[]) => invoke<void>("add_bloom_hats_to_collection", { hatIds }),
   setEquipped: (_accountId: string | null, hatId: string | null, colorwayId?: string | null) => invoke<void>("set_bloom_equipped_hat", { hatId, colorwayId: colorwayId || null }),

@@ -9,6 +9,39 @@ const BACKEND_URL: &str = match option_env!("BLOOM_BACKEND_URL") {
     None => "https://api.north.bloomclient.org/minecraft",
 };
 static DOWNLOAD_WORKERS: AtomicUsize = AtomicUsize::new(3);
+static BLOOM_HTTP_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+
+fn bloom_http_client() -> Result<&'static reqwest::Client, String> {
+    BLOOM_HTTP_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(6))
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
+                .tcp_nodelay(true)
+                .user_agent(concat!(
+                    "BloomClient/",
+                    env!("CARGO_PKG_VERSION"),
+                    " (support@bloomclient.org)"
+                ))
+                .build()
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+fn bloom_backend_request(
+    method: reqwest::Method,
+    path: &str,
+    timeout_seconds: u64,
+) -> Result<reqwest::RequestBuilder, String> {
+    Ok(bloom_http_client()?
+        .request(
+            method,
+            format!("{}{}", BACKEND_URL.trim_end_matches('/'), path),
+        )
+        .timeout(std::time::Duration::from_secs(timeout_seconds)))
+}
 
 fn command_without_console(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
     let mut command = std::process::Command::new(program);
@@ -192,15 +225,24 @@ struct BloomBraceletCatalogItem {
 }
 
 #[derive(serde::Deserialize)]
-struct BloomBraceletCatalogResponse { items: Vec<BloomBraceletCatalogItem> }
+struct BloomBraceletCatalogResponse {
+    items: Vec<BloomBraceletCatalogItem>,
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct BloomBraceletAssetLease { url: String, expires_at: u64, revision: String }
+struct BloomBraceletAssetLease {
+    url: String,
+    expires_at: u64,
+    revision: String,
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct BloomBraceletPreviewData { data_url: String, revision: String }
+struct BloomBraceletPreviewData {
+    data_url: String,
+    revision: String,
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -213,7 +255,9 @@ struct BloomBraceletAccountState {
     equipped_bracelet_arm: String,
 }
 
-fn default_bracelet_arm() -> String { "right".into() }
+fn default_bracelet_arm() -> String {
+    "right".into()
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -435,12 +479,7 @@ async fn direct_modrinth_search(
 
 #[tauri::command]
 async fn get_backend_status() -> Result<BackendStatus, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(6))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?
-        .get(format!("{}/health", BACKEND_URL.trim_end_matches('/')))
+    bloom_backend_request(reqwest::Method::GET, "/health", 6)?
         .send()
         .await
         .map_err(|error| format!("Bloom backend is unavailable: {error}"))?
@@ -453,12 +492,7 @@ async fn get_backend_status() -> Result<BackendStatus, String> {
 
 #[tauri::command]
 async fn list_bloom_capes() -> Result<Vec<BloomCapeCatalogItem>, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?
-        .get(format!("{}/v1/capes", BACKEND_URL.trim_end_matches('/')))
+    bloom_backend_request(reqwest::Method::GET, "/v1/capes", 10)?
         .send()
         .await
         .map_err(|error| format!("Bloom's cape catalog is unavailable: {error}"))?
@@ -471,16 +505,14 @@ async fn list_bloom_capes() -> Result<Vec<BloomCapeCatalogItem>, String> {
 }
 
 #[tauri::command]
-async fn lease_bloom_cape_texture(cape_id: String, colorway_id: Option<String>) -> Result<BloomCapeTextureLease, String> {
+async fn lease_bloom_cape_texture(
+    cape_id: String,
+    colorway_id: Option<String>,
+) -> Result<BloomCapeTextureLease, String> {
     let path = colorway_id
         .map(|id| format!("/v1/capes/{cape_id}/colorways/{id}/texture"))
         .unwrap_or_else(|| format!("/v1/capes/{cape_id}/texture"));
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?
-        .get(format!("{}{}", BACKEND_URL.trim_end_matches('/'), path))
+    bloom_backend_request(reqwest::Method::GET, &path, 10)?
         .send()
         .await
         .map_err(|error| format!("Bloom's cape texture is unavailable: {error}"))?
@@ -492,16 +524,16 @@ async fn lease_bloom_cape_texture(cape_id: String, colorway_id: Option<String>) 
 }
 
 #[tauri::command]
-async fn load_bloom_cape_texture_data(cape_id: String, colorway_id: Option<String>) -> Result<BloomCapeTextureData, String> {
+async fn load_bloom_cape_texture_data(
+    cape_id: String,
+    colorway_id: Option<String>,
+) -> Result<BloomCapeTextureData, String> {
     use base64::Engine;
 
     let lease = lease_bloom_cape_texture(cape_id, colorway_id).await?;
-    let response = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?
+    let response = bloom_http_client()?
         .get(&lease.url)
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .map_err(|error| format!("Bloom's cape texture could not be downloaded: {error}"))?
@@ -524,25 +556,39 @@ async fn load_bloom_cape_texture_data(cape_id: String, colorway_id: Option<Strin
     })
 }
 
+async fn send_bloom_authenticated_request(
+    session: &MinecraftSession,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<&serde_json::Value>,
+    unavailable_message: &str,
+) -> Result<reqwest::Response, String> {
+    let request = bloom_backend_request(method, path, 12)?.bearer_auth(&session.access_token);
+    let request = if let Some(value) = body {
+        request.json(value)
+    } else {
+        request
+    };
+    request
+        .send()
+        .await
+        .map_err(|error| format!("{unavailable_message}: {error}"))
+}
+
 async fn send_bloom_cape_equip(
     session: &MinecraftSession,
     cape_id: &Option<String>,
     colorway_id: &Option<String>,
 ) -> Result<reqwest::Response, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(12))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?
-        .put(format!(
-            "{}/v1/capes/equipped",
-            BACKEND_URL.trim_end_matches('/')
-        ))
-        .bearer_auth(&session.access_token)
-        .json(&serde_json::json!({ "capeId": cape_id, "colorwayId": colorway_id }))
-        .send()
-        .await
-        .map_err(|error| format!("Bloom could not update your cape: {error}"))
+    let body = serde_json::json!({ "capeId": cape_id, "colorwayId": colorway_id });
+    send_bloom_authenticated_request(
+        session,
+        reqwest::Method::PUT,
+        "/v1/capes/equipped",
+        Some(&body),
+        "Bloom could not update your cape",
+    )
+    .await
 }
 
 #[tauri::command]
@@ -562,9 +608,9 @@ async fn set_bloom_equipped_cape(
     let mut session = stored.clone();
     let mut response = send_bloom_cape_equip(&session, &cape_id, &colorway_id).await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        session = refresh_minecraft_session(&stored)
-            .await
-            .map_err(|error| format!("Your selected Microsoft account needs to reconnect: {error}"))?;
+        session = refresh_minecraft_session(&stored).await.map_err(|error| {
+            format!("Your selected Microsoft account needs to reconnect: {error}")
+        })?;
         response = send_bloom_cape_equip(&session, &cape_id, &colorway_id).await?;
     }
     if !response.status().is_success() {
@@ -582,20 +628,14 @@ async fn set_bloom_equipped_cape(
         *state
             .session
             .lock()
-            .map_err(|_| "Bloom could not save the refreshed Minecraft account.")? =
-            Some(session);
+            .map_err(|_| "Bloom could not save the refreshed Minecraft account.")? = Some(session);
     }
     Ok(())
 }
 
 #[tauri::command]
 async fn list_bloom_hats() -> Result<Vec<BloomHatCatalogItem>, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?
-        .get(format!("{}/v1/hats", BACKEND_URL.trim_end_matches('/')))
+    bloom_backend_request(reqwest::Method::GET, "/v1/hats", 10)?
         .send()
         .await
         .map_err(|error| format!("Bloom's hat catalog is unavailable: {error}"))?
@@ -608,18 +648,18 @@ async fn list_bloom_hats() -> Result<Vec<BloomHatCatalogItem>, String> {
 }
 
 #[tauri::command]
-async fn load_bloom_hat_preview_data(hat_id: String, colorway_id: Option<String>) -> Result<BloomHatPreviewData, String> {
+async fn load_bloom_hat_preview_data(
+    hat_id: String,
+    colorway_id: Option<String>,
+) -> Result<BloomHatPreviewData, String> {
     use base64::Engine;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = bloom_http_client()?;
     let path = colorway_id
         .map(|id| format!("/v1/hats/{hat_id}/colorways/{id}/preview"))
         .unwrap_or_else(|| format!("/v1/hats/{hat_id}/preview"));
     let lease = client
         .get(format!("{}{}", BACKEND_URL.trim_end_matches('/'), path))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .map_err(|error| format!("Bloom's hat preview is unavailable: {error}"))?
@@ -630,6 +670,7 @@ async fn load_bloom_hat_preview_data(hat_id: String, colorway_id: Option<String>
         .map_err(|error| format!("Bloom's hat service returned invalid data: {error}"))?;
     let bytes = client
         .get(&lease.url)
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .map_err(|error| format!("Bloom's hat preview could not be downloaded: {error}"))?
@@ -642,7 +683,10 @@ async fn load_bloom_hat_preview_data(hat_id: String, colorway_id: Option<String>
         return Err("Bloom's hat preview is unexpectedly large.".into());
     }
     Ok(BloomHatPreviewData {
-        data_url: format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)),
+        data_url: format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        ),
         revision: lease.revision,
     })
 }
@@ -653,16 +697,14 @@ async fn send_bloom_hat_request(
     path: &str,
     body: Option<&serde_json::Value>,
 ) -> Result<reqwest::Response, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(12))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let request = client
-        .request(method, format!("{}{}", BACKEND_URL.trim_end_matches('/'), path))
-        .bearer_auth(&session.access_token);
-    let request = if let Some(value) = body { request.json(value) } else { request };
-    request.send().await.map_err(|error| format!("Bloom's hat service is unavailable: {error}"))
+    send_bloom_authenticated_request(
+        session,
+        method,
+        path,
+        body,
+        "Bloom's hat service is unavailable",
+    )
+    .await
 }
 
 fn launcher_session(state: &tauri::State<'_, LauncherState>) -> Result<MinecraftSession, String> {
@@ -672,7 +714,9 @@ fn launcher_session(state: &tauri::State<'_, LauncherState>) -> Result<Minecraft
         .map_err(|_| "Bloom could not read the active Minecraft account.".to_string())?
         .clone()
         .or_else(saved_session)
-        .ok_or_else(|| "Sign in with Microsoft before changing your cosmetic collection.".to_string())
+        .ok_or_else(|| {
+            "Sign in with Microsoft before changing your cosmetic collection.".to_string()
+        })
 }
 
 fn save_refreshed_launcher_session(
@@ -682,25 +726,39 @@ fn save_refreshed_launcher_session(
 ) -> Result<(), String> {
     if session.access_token != original.access_token {
         save_account_session(&session, true)?;
-        *state.session.lock().map_err(|_| "Bloom could not save the refreshed Minecraft account.")? = Some(session);
+        *state
+            .session
+            .lock()
+            .map_err(|_| "Bloom could not save the refreshed Minecraft account.")? = Some(session);
     }
     Ok(())
 }
 
 #[tauri::command]
-async fn get_bloom_hat_account_state(state: tauri::State<'_, LauncherState>) -> Result<BloomHatAccountState, String> {
+async fn get_bloom_hat_account_state(
+    state: tauri::State<'_, LauncherState>,
+) -> Result<BloomHatAccountState, String> {
     let stored = launcher_session(&state)?;
     let mut session = stored.clone();
-    let mut response = send_bloom_hat_request(&session, reqwest::Method::GET, "/v1/hats/me", None).await?;
+    let mut response =
+        send_bloom_hat_request(&session, reqwest::Method::GET, "/v1/hats/me", None).await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        session = refresh_minecraft_session(&stored).await.map_err(|error| format!("Your selected Microsoft account needs to reconnect: {error}"))?;
-        response = send_bloom_hat_request(&session, reqwest::Method::GET, "/v1/hats/me", None).await?;
+        session = refresh_minecraft_session(&stored).await.map_err(|error| {
+            format!("Your selected Microsoft account needs to reconnect: {error}")
+        })?;
+        response =
+            send_bloom_hat_request(&session, reqwest::Method::GET, "/v1/hats/me", None).await?;
     }
     if !response.status().is_success() {
         let status = response.status();
-        return Err(format!("Bloom's hat service rejected the account state ({status})."));
+        return Err(format!(
+            "Bloom's hat service rejected the account state ({status})."
+        ));
     }
-    let result = response.json::<BloomHatAccountState>().await.map_err(|error| format!("Bloom's hat service returned invalid account data: {error}"))?;
+    let result = response
+        .json::<BloomHatAccountState>()
+        .await
+        .map_err(|error| format!("Bloom's hat service returned invalid account data: {error}"))?;
     save_refreshed_launcher_session(&state, &stored, session)?;
     Ok(result)
 }
@@ -713,15 +771,33 @@ async fn add_bloom_hats_to_collection(
     let stored = launcher_session(&state)?;
     let mut session = stored.clone();
     let body = serde_json::json!({ "hatIds": hat_ids });
-    let mut response = send_bloom_hat_request(&session, reqwest::Method::PUT, "/v1/hats/collection", Some(&body)).await?;
+    let mut response = send_bloom_hat_request(
+        &session,
+        reqwest::Method::PUT,
+        "/v1/hats/collection",
+        Some(&body),
+    )
+    .await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        session = refresh_minecraft_session(&stored).await.map_err(|error| format!("Your selected Microsoft account needs to reconnect: {error}"))?;
-        response = send_bloom_hat_request(&session, reqwest::Method::PUT, "/v1/hats/collection", Some(&body)).await?;
+        session = refresh_minecraft_session(&stored).await.map_err(|error| {
+            format!("Your selected Microsoft account needs to reconnect: {error}")
+        })?;
+        response = send_bloom_hat_request(
+            &session,
+            reqwest::Method::PUT,
+            "/v1/hats/collection",
+            Some(&body),
+        )
+        .await?;
     }
     if !response.status().is_success() {
         let status = response.status();
         let detail = response.text().await.unwrap_or_default();
-        return Err(if detail.is_empty() { format!("Bloom could not add the hats ({status}).") } else { format!("Bloom could not add the hats ({status}): {detail}") });
+        return Err(if detail.is_empty() {
+            format!("Bloom could not add the hats ({status}).")
+        } else {
+            format!("Bloom could not add the hats ({status}): {detail}")
+        });
     }
     save_refreshed_launcher_session(&state, &stored, session)
 }
@@ -735,27 +811,40 @@ async fn set_bloom_equipped_hat(
     let stored = launcher_session(&state)?;
     let mut session = stored.clone();
     let body = serde_json::json!({ "hatId": hat_id, "colorwayId": colorway_id });
-    let mut response = send_bloom_hat_request(&session, reqwest::Method::PUT, "/v1/hats/equipped", Some(&body)).await?;
+    let mut response = send_bloom_hat_request(
+        &session,
+        reqwest::Method::PUT,
+        "/v1/hats/equipped",
+        Some(&body),
+    )
+    .await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        session = refresh_minecraft_session(&stored).await.map_err(|error| format!("Your selected Microsoft account needs to reconnect: {error}"))?;
-        response = send_bloom_hat_request(&session, reqwest::Method::PUT, "/v1/hats/equipped", Some(&body)).await?;
+        session = refresh_minecraft_session(&stored).await.map_err(|error| {
+            format!("Your selected Microsoft account needs to reconnect: {error}")
+        })?;
+        response = send_bloom_hat_request(
+            &session,
+            reqwest::Method::PUT,
+            "/v1/hats/equipped",
+            Some(&body),
+        )
+        .await?;
     }
     if !response.status().is_success() {
         let status = response.status();
         let detail = response.text().await.unwrap_or_default();
-        return Err(if detail.is_empty() { format!("Bloom could not equip the hat ({status}).") } else { format!("Bloom could not equip the hat ({status}): {detail}") });
+        return Err(if detail.is_empty() {
+            format!("Bloom could not equip the hat ({status}).")
+        } else {
+            format!("Bloom could not equip the hat ({status}): {detail}")
+        });
     }
     save_refreshed_launcher_session(&state, &stored, session)
 }
 
 #[tauri::command]
 async fn list_bloom_wings() -> Result<Vec<BloomWingCatalogItem>, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?
-        .get(format!("{}/v1/wings", BACKEND_URL.trim_end_matches('/')))
+    bloom_backend_request(reqwest::Method::GET, "/v1/wings", 10)?
         .send()
         .await
         .map_err(|error| format!("Bloom's wing catalog is unavailable: {error}"))?
@@ -768,18 +857,18 @@ async fn list_bloom_wings() -> Result<Vec<BloomWingCatalogItem>, String> {
 }
 
 #[tauri::command]
-async fn load_bloom_wing_preview_data(wing_id: String, colorway_id: Option<String>) -> Result<BloomWingPreviewData, String> {
+async fn load_bloom_wing_preview_data(
+    wing_id: String,
+    colorway_id: Option<String>,
+) -> Result<BloomWingPreviewData, String> {
     use base64::Engine;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = bloom_http_client()?;
     let path = colorway_id
         .map(|id| format!("/v1/wings/{wing_id}/colorways/{id}/preview"))
         .unwrap_or_else(|| format!("/v1/wings/{wing_id}/preview"));
     let lease = client
         .get(format!("{}{}", BACKEND_URL.trim_end_matches('/'), path))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .map_err(|error| format!("Bloom's wing preview is unavailable: {error}"))?
@@ -790,6 +879,7 @@ async fn load_bloom_wing_preview_data(wing_id: String, colorway_id: Option<Strin
         .map_err(|error| format!("Bloom's wing service returned invalid data: {error}"))?;
     let bytes = client
         .get(&lease.url)
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .map_err(|error| format!("Bloom's wing preview could not be downloaded: {error}"))?
@@ -802,7 +892,10 @@ async fn load_bloom_wing_preview_data(wing_id: String, colorway_id: Option<Strin
         return Err("Bloom's wing preview is unexpectedly large.".into());
     }
     Ok(BloomWingPreviewData {
-        data_url: format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)),
+        data_url: format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        ),
         revision: lease.revision,
     })
 }
@@ -813,32 +906,41 @@ async fn send_bloom_wing_request(
     path: &str,
     body: Option<&serde_json::Value>,
 ) -> Result<reqwest::Response, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(12))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let request = client
-        .request(method, format!("{}{}", BACKEND_URL.trim_end_matches('/'), path))
-        .bearer_auth(&session.access_token);
-    let request = if let Some(value) = body { request.json(value) } else { request };
-    request.send().await.map_err(|error| format!("Bloom's wing service is unavailable: {error}"))
+    send_bloom_authenticated_request(
+        session,
+        method,
+        path,
+        body,
+        "Bloom's wing service is unavailable",
+    )
+    .await
 }
 
 #[tauri::command]
-async fn get_bloom_wing_account_state(state: tauri::State<'_, LauncherState>) -> Result<BloomWingAccountState, String> {
+async fn get_bloom_wing_account_state(
+    state: tauri::State<'_, LauncherState>,
+) -> Result<BloomWingAccountState, String> {
     let stored = launcher_session(&state)?;
     let mut session = stored.clone();
-    let mut response = send_bloom_wing_request(&session, reqwest::Method::GET, "/v1/wings/me", None).await?;
+    let mut response =
+        send_bloom_wing_request(&session, reqwest::Method::GET, "/v1/wings/me", None).await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        session = refresh_minecraft_session(&stored).await.map_err(|error| format!("Your selected Microsoft account needs to reconnect: {error}"))?;
-        response = send_bloom_wing_request(&session, reqwest::Method::GET, "/v1/wings/me", None).await?;
+        session = refresh_minecraft_session(&stored).await.map_err(|error| {
+            format!("Your selected Microsoft account needs to reconnect: {error}")
+        })?;
+        response =
+            send_bloom_wing_request(&session, reqwest::Method::GET, "/v1/wings/me", None).await?;
     }
     if !response.status().is_success() {
         let status = response.status();
-        return Err(format!("Bloom's wing service rejected the account state ({status})."));
+        return Err(format!(
+            "Bloom's wing service rejected the account state ({status})."
+        ));
     }
-    let result = response.json::<BloomWingAccountState>().await.map_err(|error| format!("Bloom's wing service returned invalid account data: {error}"))?;
+    let result = response
+        .json::<BloomWingAccountState>()
+        .await
+        .map_err(|error| format!("Bloom's wing service returned invalid account data: {error}"))?;
     save_refreshed_launcher_session(&state, &stored, session)?;
     Ok(result)
 }
@@ -851,15 +953,33 @@ async fn add_bloom_wings_to_collection(
     let stored = launcher_session(&state)?;
     let mut session = stored.clone();
     let body = serde_json::json!({ "wingIds": wing_ids });
-    let mut response = send_bloom_wing_request(&session, reqwest::Method::PUT, "/v1/wings/collection", Some(&body)).await?;
+    let mut response = send_bloom_wing_request(
+        &session,
+        reqwest::Method::PUT,
+        "/v1/wings/collection",
+        Some(&body),
+    )
+    .await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        session = refresh_minecraft_session(&stored).await.map_err(|error| format!("Your selected Microsoft account needs to reconnect: {error}"))?;
-        response = send_bloom_wing_request(&session, reqwest::Method::PUT, "/v1/wings/collection", Some(&body)).await?;
+        session = refresh_minecraft_session(&stored).await.map_err(|error| {
+            format!("Your selected Microsoft account needs to reconnect: {error}")
+        })?;
+        response = send_bloom_wing_request(
+            &session,
+            reqwest::Method::PUT,
+            "/v1/wings/collection",
+            Some(&body),
+        )
+        .await?;
     }
     if !response.status().is_success() {
         let status = response.status();
         let detail = response.text().await.unwrap_or_default();
-        return Err(if detail.is_empty() { format!("Bloom could not add the wings ({status}).") } else { format!("Bloom could not add the wings ({status}): {detail}") });
+        return Err(if detail.is_empty() {
+            format!("Bloom could not add the wings ({status}).")
+        } else {
+            format!("Bloom could not add the wings ({status}): {detail}")
+        });
     }
     save_refreshed_launcher_session(&state, &stored, session)
 }
@@ -873,97 +993,219 @@ async fn set_bloom_equipped_wing(
     let stored = launcher_session(&state)?;
     let mut session = stored.clone();
     let body = serde_json::json!({ "wingId": wing_id, "colorwayId": colorway_id });
-    let mut response = send_bloom_wing_request(&session, reqwest::Method::PUT, "/v1/wings/equipped", Some(&body)).await?;
+    let mut response = send_bloom_wing_request(
+        &session,
+        reqwest::Method::PUT,
+        "/v1/wings/equipped",
+        Some(&body),
+    )
+    .await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        session = refresh_minecraft_session(&stored).await.map_err(|error| format!("Your selected Microsoft account needs to reconnect: {error}"))?;
-        response = send_bloom_wing_request(&session, reqwest::Method::PUT, "/v1/wings/equipped", Some(&body)).await?;
+        session = refresh_minecraft_session(&stored).await.map_err(|error| {
+            format!("Your selected Microsoft account needs to reconnect: {error}")
+        })?;
+        response = send_bloom_wing_request(
+            &session,
+            reqwest::Method::PUT,
+            "/v1/wings/equipped",
+            Some(&body),
+        )
+        .await?;
     }
     if !response.status().is_success() {
         let status = response.status();
         let detail = response.text().await.unwrap_or_default();
-        return Err(if detail.is_empty() { format!("Bloom could not equip the wings ({status}).") } else { format!("Bloom could not equip the wings ({status}): {detail}") });
+        return Err(if detail.is_empty() {
+            format!("Bloom could not equip the wings ({status}).")
+        } else {
+            format!("Bloom could not equip the wings ({status}): {detail}")
+        });
     }
     save_refreshed_launcher_session(&state, &stored, session)
 }
 
 #[tauri::command]
 async fn list_bloom_bracelets() -> Result<Vec<BloomBraceletCatalogItem>, String> {
-    reqwest::Client::builder().timeout(std::time::Duration::from_secs(10))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION"))).build().map_err(|e| e.to_string())?
-        .get(format!("{}/v1/bracelets", BACKEND_URL.trim_end_matches('/'))).send().await
-        .map_err(|e| format!("Bloom's bracelet catalog is unavailable: {e}"))?.error_for_status()
-        .map_err(|e| format!("Bloom's bracelet catalog rejected the request: {e}"))?
-        .json::<BloomBraceletCatalogResponse>().await.map(|r| r.items)
-        .map_err(|e| format!("Bloom's bracelet catalog returned invalid data: {e}"))
+    bloom_backend_request(reqwest::Method::GET, "/v1/bracelets", 10)?
+        .send()
+        .await
+        .map_err(|error| format!("Bloom's bracelet catalog is unavailable: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Bloom's bracelet catalog rejected the request: {error}"))?
+        .json::<BloomBraceletCatalogResponse>()
+        .await
+        .map(|response| response.items)
+        .map_err(|error| format!("Bloom's bracelet catalog returned invalid data: {error}"))
 }
 
 #[tauri::command]
-async fn load_bloom_bracelet_preview_data(bracelet_id: String, colorway_id: Option<String>) -> Result<BloomBraceletPreviewData, String> {
+async fn load_bloom_bracelet_preview_data(
+    bracelet_id: String,
+    colorway_id: Option<String>,
+) -> Result<BloomBraceletPreviewData, String> {
     use base64::Engine;
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION"))).build().map_err(|e| e.to_string())?;
-    let path = colorway_id.map(|id| format!("/v1/bracelets/{bracelet_id}/colorways/{id}/preview"))
+    let client = bloom_http_client()?;
+    let path = colorway_id
+        .map(|id| format!("/v1/bracelets/{bracelet_id}/colorways/{id}/preview"))
         .unwrap_or_else(|| format!("/v1/bracelets/{bracelet_id}/preview"));
-    let lease = client.get(format!("{}{}", BACKEND_URL.trim_end_matches('/'), path)).send().await
-        .map_err(|e| format!("Bloom's bracelet preview is unavailable: {e}"))?.error_for_status()
-        .map_err(|e| format!("Bloom's bracelet preview could not be opened: {e}"))?
-        .json::<BloomBraceletAssetLease>().await.map_err(|e| format!("Bloom's bracelet service returned invalid data: {e}"))?;
-    let bytes = client.get(&lease.url).send().await.map_err(|e| format!("Bloom's bracelet preview could not be downloaded: {e}"))?
-        .error_for_status().map_err(|e| format!("Bloom's bracelet preview download was rejected: {e}"))?
-        .bytes().await.map_err(|e| format!("Bloom's bracelet preview was incomplete: {e}"))?;
-    if bytes.len() > 3 * 1024 * 1024 { return Err("Bloom's bracelet preview is unexpectedly large.".into()); }
-    Ok(BloomBraceletPreviewData { data_url: format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)), revision: lease.revision })
+    let lease = client
+        .get(format!("{}{}", BACKEND_URL.trim_end_matches('/'), path))
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|error| format!("Bloom's bracelet preview is unavailable: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Bloom's bracelet preview could not be opened: {error}"))?
+        .json::<BloomBraceletAssetLease>()
+        .await
+        .map_err(|error| format!("Bloom's bracelet service returned invalid data: {error}"))?;
+    let bytes = client
+        .get(&lease.url)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|error| format!("Bloom's bracelet preview could not be downloaded: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Bloom's bracelet preview download was rejected: {error}"))?
+        .bytes()
+        .await
+        .map_err(|error| format!("Bloom's bracelet preview was incomplete: {error}"))?;
+    if bytes.len() > 3 * 1024 * 1024 {
+        return Err("Bloom's bracelet preview is unexpectedly large.".into());
+    }
+    Ok(BloomBraceletPreviewData {
+        data_url: format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        ),
+        revision: lease.revision,
+    })
 }
 
-async fn send_bloom_bracelet_request(session: &MinecraftSession, method: reqwest::Method, path: &str, body: Option<&serde_json::Value>) -> Result<reqwest::Response, String> {
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(12))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION"))).build().map_err(|e| e.to_string())?;
-    let request = client.request(method, format!("{}{}", BACKEND_URL.trim_end_matches('/'), path)).bearer_auth(&session.access_token);
-    (if let Some(value) = body { request.json(value) } else { request }).send().await
-        .map_err(|e| format!("Bloom's bracelet service is unavailable: {e}"))
+async fn send_bloom_bracelet_request(
+    session: &MinecraftSession,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<&serde_json::Value>,
+) -> Result<reqwest::Response, String> {
+    send_bloom_authenticated_request(
+        session,
+        method,
+        path,
+        body,
+        "Bloom's bracelet service is unavailable",
+    )
+    .await
 }
 
 #[tauri::command]
-async fn get_bloom_bracelet_account_state(state: tauri::State<'_, LauncherState>) -> Result<BloomBraceletAccountState, String> {
+async fn get_bloom_bracelet_account_state(
+    state: tauri::State<'_, LauncherState>,
+) -> Result<BloomBraceletAccountState, String> {
     let stored = launcher_session(&state)?;
     let mut session = stored.clone();
-    let mut response = send_bloom_bracelet_request(&session, reqwest::Method::GET, "/v1/bracelets/me", None).await?;
+    let mut response =
+        send_bloom_bracelet_request(&session, reqwest::Method::GET, "/v1/bracelets/me", None)
+            .await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        session = refresh_minecraft_session(&stored).await.map_err(|e| format!("Your selected Microsoft account needs to reconnect: {e}"))?;
-        response = send_bloom_bracelet_request(&session, reqwest::Method::GET, "/v1/bracelets/me", None).await?;
+        session = refresh_minecraft_session(&stored)
+            .await
+            .map_err(|e| format!("Your selected Microsoft account needs to reconnect: {e}"))?;
+        response =
+            send_bloom_bracelet_request(&session, reqwest::Method::GET, "/v1/bracelets/me", None)
+                .await?;
     }
-    if !response.status().is_success() { return Err(format!("Bloom's bracelet service rejected the account state ({}).", response.status())); }
-    let result = response.json::<BloomBraceletAccountState>().await.map_err(|e| format!("Bloom's bracelet service returned invalid account data: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Bloom's bracelet service rejected the account state ({}).",
+            response.status()
+        ));
+    }
+    let result = response
+        .json::<BloomBraceletAccountState>()
+        .await
+        .map_err(|e| format!("Bloom's bracelet service returned invalid account data: {e}"))?;
     save_refreshed_launcher_session(&state, &stored, session)?;
     Ok(result)
 }
 
 #[tauri::command]
-async fn add_bloom_bracelets_to_collection(state: tauri::State<'_, LauncherState>, bracelet_ids: Vec<String>) -> Result<(), String> {
+async fn add_bloom_bracelets_to_collection(
+    state: tauri::State<'_, LauncherState>,
+    bracelet_ids: Vec<String>,
+) -> Result<(), String> {
     let stored = launcher_session(&state)?;
     let mut session = stored.clone();
     let body = serde_json::json!({ "braceletIds": bracelet_ids });
-    let mut response = send_bloom_bracelet_request(&session, reqwest::Method::PUT, "/v1/bracelets/collection", Some(&body)).await?;
+    let mut response = send_bloom_bracelet_request(
+        &session,
+        reqwest::Method::PUT,
+        "/v1/bracelets/collection",
+        Some(&body),
+    )
+    .await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        session = refresh_minecraft_session(&stored).await.map_err(|e| format!("Your selected Microsoft account needs to reconnect: {e}"))?;
-        response = send_bloom_bracelet_request(&session, reqwest::Method::PUT, "/v1/bracelets/collection", Some(&body)).await?;
+        session = refresh_minecraft_session(&stored)
+            .await
+            .map_err(|e| format!("Your selected Microsoft account needs to reconnect: {e}"))?;
+        response = send_bloom_bracelet_request(
+            &session,
+            reqwest::Method::PUT,
+            "/v1/bracelets/collection",
+            Some(&body),
+        )
+        .await?;
     }
-    if !response.status().is_success() { let status = response.status(); let detail = response.text().await.unwrap_or_default(); return Err(format!("Bloom could not add the bracelets ({status}): {detail}")); }
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Bloom could not add the bracelets ({status}): {detail}"
+        ));
+    }
     save_refreshed_launcher_session(&state, &stored, session)
 }
 
 #[tauri::command]
-async fn set_bloom_equipped_bracelet(state: tauri::State<'_, LauncherState>, bracelet_id: Option<String>, colorway_id: Option<String>, arm: String) -> Result<(), String> {
-    if arm != "left" && arm != "right" { return Err("Bracelet arm must be left or right.".into()); }
+async fn set_bloom_equipped_bracelet(
+    state: tauri::State<'_, LauncherState>,
+    bracelet_id: Option<String>,
+    colorway_id: Option<String>,
+    arm: String,
+) -> Result<(), String> {
+    if arm != "left" && arm != "right" {
+        return Err("Bracelet arm must be left or right.".into());
+    }
     let stored = launcher_session(&state)?;
     let mut session = stored.clone();
-    let body = serde_json::json!({ "braceletId": bracelet_id, "colorwayId": colorway_id, "arm": arm });
-    let mut response = send_bloom_bracelet_request(&session, reqwest::Method::PUT, "/v1/bracelets/equipped", Some(&body)).await?;
+    let body =
+        serde_json::json!({ "braceletId": bracelet_id, "colorwayId": colorway_id, "arm": arm });
+    let mut response = send_bloom_bracelet_request(
+        &session,
+        reqwest::Method::PUT,
+        "/v1/bracelets/equipped",
+        Some(&body),
+    )
+    .await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        session = refresh_minecraft_session(&stored).await.map_err(|e| format!("Your selected Microsoft account needs to reconnect: {e}"))?;
-        response = send_bloom_bracelet_request(&session, reqwest::Method::PUT, "/v1/bracelets/equipped", Some(&body)).await?;
+        session = refresh_minecraft_session(&stored)
+            .await
+            .map_err(|e| format!("Your selected Microsoft account needs to reconnect: {e}"))?;
+        response = send_bloom_bracelet_request(
+            &session,
+            reqwest::Method::PUT,
+            "/v1/bracelets/equipped",
+            Some(&body),
+        )
+        .await?;
     }
-    if !response.status().is_success() { let status = response.status(); let detail = response.text().await.unwrap_or_default(); return Err(format!("Bloom could not equip the bracelet ({status}): {detail}")); }
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Bloom could not equip the bracelet ({status}): {detail}"
+        ));
+    }
     save_refreshed_launcher_session(&state, &stored, session)
 }
 
@@ -3639,11 +3881,18 @@ async fn import_modrinth_modpack(
     }
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(90))
-        .user_agent(concat!("BloomClient/", env!("CARGO_PKG_VERSION"), " (support@bloomclient.org)"))
+        .user_agent(concat!(
+            "BloomClient/",
+            env!("CARGO_PKG_VERSION"),
+            " (support@bloomclient.org)"
+        ))
         .build()
         .map_err(|error| error.to_string())?;
     let version = client
-        .get(format!("https://api.modrinth.com/v2/version/{}", version_id.trim()))
+        .get(format!(
+            "https://api.modrinth.com/v2/version/{}",
+            version_id.trim()
+        ))
         .send()
         .await
         .map_err(|error| format!("Bloom could not resolve that Modrinth pack: {error}"))?
@@ -3652,8 +3901,10 @@ async fn import_modrinth_modpack(
         .json::<ModrinthVersion>()
         .await
         .map_err(|error| format!("Modrinth returned invalid pack information: {error}"))?;
-    let file = primary_modrinth_file(&version).ok_or("That Modrinth release has no downloadable pack file.")?;
-    if !file.filename.to_ascii_lowercase().ends_with(".mrpack") || !allowed_pack_download(&file.url) {
+    let file = primary_modrinth_file(&version)
+        .ok_or("That Modrinth release has no downloadable pack file.")?;
+    if !file.filename.to_ascii_lowercase().ends_with(".mrpack") || !allowed_pack_download(&file.url)
+    {
         return Err("Bloom only imports trusted Modrinth .mrpack downloads.".into());
     }
     if file.size > 512 * 1024 * 1024 {
@@ -3674,10 +3925,21 @@ async fn import_modrinth_modpack(
     }
     let imports = bloom_data_dir()?.join("imports");
     std::fs::create_dir_all(&imports).map_err(|error| error.to_string())?;
-    let safe_project = project_id.chars().filter(|character| character.is_ascii_alphanumeric() || *character == '-' || *character == '_').collect::<String>();
-    let safe_version = version_id.chars().filter(|character| character.is_ascii_alphanumeric() || *character == '-' || *character == '_').collect::<String>();
+    let safe_project = project_id
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || *character == '-' || *character == '_'
+        })
+        .collect::<String>();
+    let safe_version = version_id
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || *character == '-' || *character == '_'
+        })
+        .collect::<String>();
     let pack_path = imports.join(format!("{}-{}.mrpack", safe_project, safe_version));
-    std::fs::write(&pack_path, bytes).map_err(|error| format!("Bloom could not save the downloaded pack: {error}"))?;
+    std::fs::write(&pack_path, bytes)
+        .map_err(|error| format!("Bloom could not save the downloaded pack: {error}"))?;
     import_fabric_modpack_path(app, &state, pack_path)
 }
 
@@ -4491,14 +4753,18 @@ fn sync_bloom_cosmetics_mod(config: &InstanceConfig) -> Result<(), String> {
     }
     std::fs::create_dir_all(&mods).map_err(|error| error.to_string())?;
     let destination = mods.join(FILE_NAME);
-    if supported && std::fs::read(&destination)
-        .map(|existing| existing == JAR)
-        .unwrap_or(false)
+    if supported
+        && std::fs::read(&destination)
+            .map(|existing| existing == JAR)
+            .unwrap_or(false)
     {
         return Ok(());
     }
 
-    for entry in std::fs::read_dir(&mods).map_err(|error| error.to_string())?.flatten() {
+    for entry in std::fs::read_dir(&mods)
+        .map_err(|error| error.to_string())?
+        .flatten()
+    {
         let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
         if name.starts_with("bloom-cosmetics-") && name.contains(".jar") {
             std::fs::remove_file(entry.path()).map_err(|error| {

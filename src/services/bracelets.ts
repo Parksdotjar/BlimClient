@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CosmeticColorway } from "./cosmetics";
+import {
+  cosmeticAccountKey,
+  createKeyedRequestCache,
+  createSingletonRequestCache,
+  readCosmeticAccounts,
+  uniqueStringIds,
+} from "./cosmeticCache";
 
 export type BraceletArm = "left" | "right";
 
@@ -27,28 +34,20 @@ export type BraceletAccountState = {
 };
 
 type RemoteState = Omit<BraceletAccountState, "cartIds">;
-type StorageDocument = { schemaVersion: 1; accounts: Record<string, BraceletAccountState> };
 const STORAGE_KEY = "bloom-bracelets-v1";
 const CATALOG_CACHE_MS = 15_000;
 const ACCOUNT_CACHE_MS = 30_000;
 const emptyState = (): BraceletAccountState => ({ cartIds: [], collectionIds: [], equippedBraceletId: null, equippedBraceletColorwayId: null, equippedBraceletArm: "right" });
-const accountKey = (accountId: string | null) => accountId?.replaceAll("-", "").toLowerCase() || "signed-out";
-let catalogCache: { expiresAt: number; items: BraceletCatalogItem[] } | null = null;
-let catalogRequest: Promise<BraceletCatalogItem[]> | null = null;
+const loadCachedCatalog = createSingletonRequestCache<BraceletCatalogItem[]>(CATALOG_CACHE_MS);
+const loadCachedPreview = createKeyedRequestCache<BraceletPreviewData>(5 * 60_000);
 const accountCache = new Map<string, { expiresAt: number; state: BraceletAccountState }>();
 const accountRequests = new Map<string, Promise<BraceletAccountState>>();
 
-const readDocument = (): StorageDocument => {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "") as StorageDocument;
-    if (parsed?.schemaVersion === 1 && parsed.accounts && typeof parsed.accounts === "object") return parsed;
-  } catch { /* Ignore damaged local cache. */ }
-  return { schemaVersion: 1, accounts: {} };
-};
+const readDocument = () => readCosmeticAccounts<BraceletAccountState>(STORAGE_KEY);
 
 const sanitize = (value: Partial<BraceletAccountState> | undefined): BraceletAccountState => {
-  const collectionIds = Array.isArray(value?.collectionIds) ? [...new Set(value.collectionIds.filter((id): id is string => typeof id === "string"))] : [];
-  const cartIds = Array.isArray(value?.cartIds) ? [...new Set(value.cartIds.filter((id): id is string => typeof id === "string" && !collectionIds.includes(id)))] : [];
+  const collectionIds = uniqueStringIds(value?.collectionIds);
+  const cartIds = uniqueStringIds(value?.cartIds).filter(id => !collectionIds.includes(id));
   const equippedBraceletId = typeof value?.equippedBraceletId === "string" && collectionIds.includes(value.equippedBraceletId) ? value.equippedBraceletId : null;
   return {
     cartIds,
@@ -59,11 +58,11 @@ const sanitize = (value: Partial<BraceletAccountState> | undefined): BraceletAcc
   };
 };
 
-export const loadBraceletAccountState = (accountId: string | null) => sanitize(readDocument().accounts[accountKey(accountId)] || emptyState());
+export const loadBraceletAccountState = (accountId: string | null) => sanitize(readDocument().accounts[cosmeticAccountKey(accountId)] || emptyState());
 export const saveBraceletAccountState = (accountId: string | null, state: BraceletAccountState) => {
   const document = readDocument();
   const next = sanitize(state);
-  const key = accountKey(accountId);
+  const key = cosmeticAccountKey(accountId);
   document.accounts[key] = next;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(document));
   accountCache.set(key, { expiresAt: Date.now() + ACCOUNT_CACHE_MS, state: next });
@@ -71,19 +70,13 @@ export const saveBraceletAccountState = (accountId: string | null, state: Bracel
 };
 
 const listCatalog = () => {
-  if (catalogCache && catalogCache.expiresAt > Date.now()) return Promise.resolve(catalogCache.items);
-  if (catalogRequest) return catalogRequest;
-  catalogRequest = invoke<BraceletCatalogItem[]>("list_bloom_bracelets").then((items) => {
-    catalogCache = { expiresAt: Date.now() + CATALOG_CACHE_MS, items };
-    return items;
-  }).finally(() => { catalogRequest = null; });
-  return catalogRequest;
+  return loadCachedCatalog(() => invoke<BraceletCatalogItem[]>("list_bloom_bracelets"));
 };
 
 const loadAccountState = (accountId: string | null) => {
   const local = loadBraceletAccountState(accountId);
   if (!accountId) return Promise.resolve(local);
-  const key = accountKey(accountId);
+  const key = cosmeticAccountKey(accountId);
   const cached = accountCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.state);
   const active = accountRequests.get(key);
@@ -97,7 +90,10 @@ const loadAccountState = (accountId: string | null) => {
 
 export const braceletProvider = {
   listCatalog,
-  loadPreviewData: (braceletId: string, colorwayId?: string | null) => invoke<BraceletPreviewData>("load_bloom_bracelet_preview_data", { braceletId, colorwayId: colorwayId || null }),
+  loadPreviewData: (braceletId: string, colorwayId?: string | null) => loadCachedPreview(
+    `${braceletId}:${colorwayId || "default"}`,
+    () => invoke<BraceletPreviewData>("load_bloom_bracelet_preview_data", { braceletId, colorwayId: colorwayId || null }),
+  ),
   loadAccountState,
   addToCollection: (_accountId: string | null, braceletIds: string[]) => invoke<void>("add_bloom_bracelets_to_collection", { braceletIds }),
   setEquipped: (_accountId: string | null, braceletId: string | null, colorwayId: string | null, arm: BraceletArm) => invoke<void>("set_bloom_equipped_bracelet", { braceletId, colorwayId, arm }),

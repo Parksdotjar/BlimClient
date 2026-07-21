@@ -217,3 +217,43 @@ Use the next ID and record the same fields every time:
 - **Fix:** The native window and initial HTML now paint black immediately with a lightweight Bloom loading frame. External update/backend checks and nonessential local restoration are deferred until after the client has rendered; large custom backgrounds are loaded only when that feature is enabled.
 - **Verification:** TypeScript and a full debug Tauri build complete successfully. Test the installed update by cold-opening Bloom several times; the dark first frame should appear immediately and navigation should become available without waiting for update or backend requests.
 - **Do not repeat:** Never place network checks or large persisted-data restoration on Bloom's first-paint path, and never rely on bundled CSS alone to color the webview before the frontend loads.
+
+## BLOOM-022 — Wing placement reset after a proxy server transfer
+
+- **Status:** Fixed
+- **Area:** Bloom Cosmetics / wings
+- **Symptom:** A wing used its saved placement in a server lobby, but could fall back into the player's back after the network moved the player to a duels world or another downstream server.
+- **Root cause:** Wing assignments were resolved only through the current player entity UUID. Proxy transfers can destroy and rebuild the local player entity, making that temporary identity unsafe for local cosmetic placement. Placement values were also omitted from the wing asset cache key, so a placement-only catalog update could reuse stale geometry metadata.
+- **Fix:** The local player now resolves cosmetics through the stable signed-in Minecraft account UUID across entity and world replacements. Wing cache identities now include offsets, scale, and cape-hiding state so placement-only updates cannot reuse stale values.
+- **Verification:** Join a proxy-based server lobby, confirm wing placement, enter and leave a duels match, and confirm the wing remains in the identical position after every transfer.
+- **Do not repeat:** Never key the local player's durable cosmetic state solely to a world-scoped entity identity, and never omit placement metadata from a cache key whose value contains that placement.
+
+## BLOOM-023 — Cosmetic services duplicated network work and reused stale placement data
+
+- **Status:** Fixed
+- **Area:** Bloom Client and Bloom Cosmetics runtime
+- **Symptom:** Opening cosmetic categories or refreshing in-game cosmetics could repeat identical account, catalog, model, texture, and preview requests. Placement-only hat, wing, or bracelet updates could also keep old geometry metadata until an asset changed.
+- **Root cause:** Capes, hats, wings, and bracelets each owned separate HTTP clients, refresh threads, parsing helpers, and unbounded frontend preview request paths. Downloaded model data and mutable placement settings were cached as one value, so changing only placement could either trigger unnecessary downloads or reuse stale placement.
+- **Fix:** Cosmetic services now share pooled HTTP clients, one low-priority refresh scheduler, common identity and texture helpers, bounded frontend preview caches, and in-flight request deduplication. Downloaded model/texture resources are cached separately from placement settings, allowing placement to update immediately without downloading unchanged files again.
+- **Verification:** The Fabric cosmetics build, Rust native check, and TypeScript typecheck all pass. The rebuilt 1.4.2 JAR is synchronized with Bloom Client's bundled resource.
+- **Do not repeat:** Do not create a new HTTP client, scheduler, or preview cache for each cosmetic type, and do not combine immutable downloaded assets with mutable placement state in one cache entry.
+
+## BLOOM-024 — Java Block/Item wing groups were not recognized as animation hinges
+
+- **Status:** Fixed
+- **Area:** Cosmetics Manager / animated wing import
+- **Symptom:** Correctly named `left_wing_flap` and `right_wing_flap` folders still produced the “Whole-wing flap mode” message, and the articulated sections did not flap independently.
+- **Root cause:** Some native Java Block/Item `.bbmodel` projects store group names and origins in the top-level `groups` table while the `outliner` contains only group UUIDs and cube children. Bloom read only the outliner record, so it lost every animation group name.
+- **Fix:** The model normalizer now joins `groups` metadata to matching `outliner` entries by UUID before assigning root/flap parts and hinge pivots. When a Java Block/Item folder still has a clearly unrelated default origin, Bloom safely falls back to the flap cube's explicit pivot. Generic Model files and the previous inline outliner format remain supported.
+- **Verification:** The supplied `angel_wings.bbmodel` now normalizes into one left root, one right root, one left flap, and one right flap with both flap pivots present; Cosmetics Manager typechecking passes.
+- **Do not repeat:** Never assume a Blockbench outliner entry contains its own name or origin. Resolve group metadata by UUID for every supported native project format.
+
+## BLOOM-025 — Republishing an existing wing returned 502 Bad Gateway
+
+- **Status:** Fixed
+- **Area:** Cosmetics Manager / owner API
+- **Symptom:** Publishing a revised wing with an existing slug, such as `angel-wings`, showed `Bloom API returned 502 Bad Gateway: error code: 502` even though its files uploaded successfully.
+- **Root cause:** The owner API always generated a new database row for a publish request. Supabase rejected the duplicate slug, the API removed the newly uploaded files, and the gateway surfaced the unclassified database conflict as a generic 502.
+- **Fix:** Wing publishing is now idempotent by slug. A matching wing is updated in place with new model, texture, preview, placement, and publication metadata while preserving its database ID, ownership, equipped state, and added colorways. Its default colorway follows the replacement texture, old core files are cleaned up only after the database update succeeds, and failed updates roll back safely.
+- **Verification:** A live republish of `angel-wings` now returns HTTP 200, preserves the original wing ID, retains its default colorway, and the deployed API health endpoint reports `ok`.
+- **Do not repeat:** Do not implement owner-side cosmetic replacement as delete-and-recreate or as an unconditional insert; both break stable references and turn expected revisions into duplicate-key failures.

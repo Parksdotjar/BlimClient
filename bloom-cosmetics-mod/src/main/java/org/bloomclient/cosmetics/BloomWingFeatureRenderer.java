@@ -32,24 +32,31 @@ public final class BloomWingFeatureRenderer extends FeatureRenderer<PlayerEntity
         }
 
         float angle = (float) Math.sin(System.nanoTime() * 1.0e-9 * animation.speed() * Math.PI * 2.0) * animation.amplitude();
-        if (asset.mesh().hasWingCenter()) {
+        RotationAxis flapAxis = switch (animation.axis()) {
+            case X -> RotationAxis.POSITIVE_X;
+            case Y -> RotationAxis.POSITIVE_Y;
+            case Z -> RotationAxis.POSITIVE_Z;
+        };
+        if (asset.mesh().hasWingFixed()) {
             queue.submitCustom(matrices, RenderLayers.entityCutoutNoCull(asset.texture()),
-                (entry, consumer) -> asset.mesh().renderWingCenter(entry, consumer, light));
+                (entry, consumer) -> asset.mesh().renderWingFixed(entry, consumer, light));
         }
         if (asset.mesh().hasWingLeft()) {
             matrices.push();
-            matrices.translate(0.0f, 6.0f / 16.0f, 0.0f);
-            matrices.multiply(RotationAxis.POSITIVE_Z.rotationDegrees(angle));
-            matrices.translate(0.0f, -6.0f / 16.0f, 0.0f);
+            BloomHatMesh.Pivot pivot = asset.mesh().leftFlapPivot();
+            matrices.translate(pivot.x(), pivot.y(), pivot.z());
+            matrices.multiply(flapAxis.rotationDegrees(angle));
+            matrices.translate(-pivot.x(), -pivot.y(), -pivot.z());
             queue.submitCustom(matrices, RenderLayers.entityCutoutNoCull(asset.texture()),
                 (entry, consumer) -> asset.mesh().renderWingLeft(entry, consumer, light));
             matrices.pop();
         }
         if (asset.mesh().hasWingRight()) {
             matrices.push();
-            matrices.translate(0.0f, 6.0f / 16.0f, 0.0f);
-            matrices.multiply(RotationAxis.POSITIVE_Z.rotationDegrees(-angle));
-            matrices.translate(0.0f, -6.0f / 16.0f, 0.0f);
+            BloomHatMesh.Pivot pivot = asset.mesh().rightFlapPivot();
+            matrices.translate(pivot.x(), pivot.y(), pivot.z());
+            matrices.multiply(flapAxis.rotationDegrees(-angle));
+            matrices.translate(-pivot.x(), -pivot.y(), -pivot.z());
             queue.submitCustom(matrices, RenderLayers.entityCutoutNoCull(asset.texture()),
                 (entry, consumer) -> asset.mesh().renderWingRight(entry, consumer, light));
             matrices.pop();

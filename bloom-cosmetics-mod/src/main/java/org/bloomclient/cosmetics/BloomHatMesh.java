@@ -17,17 +17,33 @@ import java.util.List;
 public final class BloomHatMesh {
     private static final int MAX_CUBES = 512;
     private final List<Quad> quads;
+    private final List<Quad> wingFixedQuads;
+    private final List<Quad> wingLeftQuads;
+    private final List<Quad> wingRightQuads;
     private final Animation animation;
-    private final boolean hasWingCenter;
-    private final boolean hasWingLeft;
-    private final boolean hasWingRight;
+    private final Pivot leftFlapPivot;
+    private final Pivot rightFlapPivot;
 
     private BloomHatMesh(List<Quad> quads, Animation animation) {
         this.quads = List.copyOf(quads);
         this.animation = animation;
-        this.hasWingCenter = quads.stream().anyMatch(quad -> quad.part == WingPart.CENTER);
-        this.hasWingLeft = quads.stream().anyMatch(quad -> quad.part == WingPart.LEFT);
-        this.hasWingRight = quads.stream().anyMatch(quad -> quad.part == WingPart.RIGHT);
+        List<Quad> fixed = new ArrayList<>();
+        List<Quad> left = new ArrayList<>();
+        List<Quad> right = new ArrayList<>();
+        for (Quad quad : quads) {
+            switch (quad.part) {
+                case LEFT_FLAP -> left.add(quad);
+                case RIGHT_FLAP -> right.add(quad);
+                default -> fixed.add(quad);
+            }
+        }
+        this.wingFixedQuads = List.copyOf(fixed);
+        this.wingLeftQuads = List.copyOf(left);
+        this.wingRightQuads = List.copyOf(right);
+        this.leftFlapPivot = quads.stream().filter(quad -> quad.part == WingPart.LEFT_FLAP && quad.animationPivot != null)
+            .map(quad -> Pivot.from(quad.animationPivot)).findFirst().orElse(new Pivot(0.0f, 6.0f / 16.0f, 0.0f));
+        this.rightFlapPivot = quads.stream().filter(quad -> quad.part == WingPart.RIGHT_FLAP && quad.animationPivot != null)
+            .map(quad -> Pivot.from(quad.animationPivot)).findFirst().orElse(new Pivot(0.0f, 6.0f / 16.0f, 0.0f));
     }
 
     public static BloomHatMesh parse(String source) {
@@ -64,29 +80,30 @@ public final class BloomHatMesh {
         return animation;
     }
 
-    public boolean hasWingCenter() { return hasWingCenter; }
-    public boolean hasWingLeft() { return hasWingLeft; }
-    public boolean hasWingRight() { return hasWingRight; }
+    public boolean hasWingFixed() { return !wingFixedQuads.isEmpty(); }
+    public boolean hasWingLeft() { return !wingLeftQuads.isEmpty(); }
+    public boolean hasWingRight() { return !wingRightQuads.isEmpty(); }
+    public Pivot leftFlapPivot() { return leftFlapPivot; }
+    public Pivot rightFlapPivot() { return rightFlapPivot; }
 
     public void render(MatrixStack.Entry entry, VertexConsumer consumer, int light) {
-        render(entry, consumer, light, null);
+        render(quads, entry, consumer, light);
     }
 
-    public void renderWingCenter(MatrixStack.Entry entry, VertexConsumer consumer, int light) {
-        render(entry, consumer, light, WingPart.CENTER);
+    public void renderWingFixed(MatrixStack.Entry entry, VertexConsumer consumer, int light) {
+        render(wingFixedQuads, entry, consumer, light);
     }
 
     public void renderWingLeft(MatrixStack.Entry entry, VertexConsumer consumer, int light) {
-        render(entry, consumer, light, WingPart.LEFT);
+        render(wingLeftQuads, entry, consumer, light);
     }
 
     public void renderWingRight(MatrixStack.Entry entry, VertexConsumer consumer, int light) {
-        render(entry, consumer, light, WingPart.RIGHT);
+        render(wingRightQuads, entry, consumer, light);
     }
 
-    private void render(MatrixStack.Entry entry, VertexConsumer consumer, int light, WingPart requestedPart) {
-        for (Quad quad : quads) {
-            if (requestedPart != null && quad.part != requestedPart) continue;
+    private static void render(List<Quad> source, MatrixStack.Entry entry, VertexConsumer consumer, int light) {
+        for (Quad quad : source) {
             for (Vertex vertex : quad.vertices) {
                 consumer.vertex(entry, vertex.x, vertex.y, vertex.z)
                     .color(255, 255, 255, 255)
@@ -111,9 +128,23 @@ public final class BloomHatMesh {
         float y2 = Math.max(from.y, to.y) / 16.0f;
         float z2 = Math.max(from.z, to.z) / 16.0f;
         float centerX = (from.x + to.x) * 0.5f;
-        WingPart wingPart = !alignWingFacesWithPreview || Math.abs(centerX) <= 0.01f
-            ? WingPart.CENTER
-            : centerX < 0 ? WingPart.LEFT : WingPart.RIGHT;
+        WingPart wingPart = WingPart.CENTER;
+        Vector3f animationPivot = null;
+        if (alignWingFacesWithPreview) {
+            String explicitPart = cube.has("animationPart") && cube.get("animationPart").isJsonPrimitive()
+                ? cube.get("animationPart").getAsString().toLowerCase()
+                : "";
+            wingPart = switch (explicitPart) {
+                case "left_root" -> WingPart.LEFT_ROOT;
+                case "right_root" -> WingPart.RIGHT_ROOT;
+                case "left_flap" -> WingPart.LEFT_FLAP;
+                case "right_flap" -> WingPart.RIGHT_FLAP;
+                default -> Math.abs(centerX) <= 0.01f ? WingPart.CENTER : centerX < 0 ? WingPart.LEFT_FLAP : WingPart.RIGHT_FLAP;
+            };
+            if ((wingPart == WingPart.LEFT_FLAP || wingPart == WingPart.RIGHT_FLAP) && cube.has("animationPivot")) {
+                animationPivot = vector(cube, "animationPivot").div(16.0f);
+            }
+        }
         Vector3f scaledPivot = new Vector3f(pivot).div(16.0f);
         Quaternionf transform = new Quaternionf().rotateZYX(
             (float) Math.toRadians(rotation.z),
@@ -123,22 +154,22 @@ public final class BloomHatMesh {
         JsonObject faces = cube.getAsJsonObject("faces");
         if (faces == null) return;
 
-        addFace(output, faces, "east", textureWidth, textureHeight, false, wingPart, transform, scaledPivot, new Vector3f(1, 0, 0),
+        addFace(output, faces, "east", textureWidth, textureHeight, false, wingPart, animationPivot, transform, scaledPivot, new Vector3f(1, 0, 0),
             point(x2, y1, z1), point(x2, y1, z2), point(x2, y2, z2), point(x2, y2, z1));
-        addFace(output, faces, "west", textureWidth, textureHeight, false, wingPart, transform, scaledPivot, new Vector3f(-1, 0, 0),
+        addFace(output, faces, "west", textureWidth, textureHeight, false, wingPart, animationPivot, transform, scaledPivot, new Vector3f(-1, 0, 0),
             point(x1, y1, z2), point(x1, y1, z1), point(x1, y2, z1), point(x1, y2, z2));
-        addFace(output, faces, "down", textureWidth, textureHeight, false, wingPart, transform, scaledPivot, new Vector3f(0, 1, 0),
+        addFace(output, faces, "down", textureWidth, textureHeight, false, wingPart, animationPivot, transform, scaledPivot, new Vector3f(0, 1, 0),
             point(x1, y2, z1), point(x2, y2, z1), point(x2, y2, z2), point(x1, y2, z2));
-        addFace(output, faces, "up", textureWidth, textureHeight, false, wingPart, transform, scaledPivot, new Vector3f(0, -1, 0),
+        addFace(output, faces, "up", textureWidth, textureHeight, false, wingPart, animationPivot, transform, scaledPivot, new Vector3f(0, -1, 0),
             point(x1, y1, z2), point(x2, y1, z2), point(x2, y1, z1), point(x1, y1, z1));
-        addFace(output, faces, "south", textureWidth, textureHeight, alignWingFacesWithPreview, wingPart, transform, scaledPivot, new Vector3f(0, 0, 1),
+        addFace(output, faces, "south", textureWidth, textureHeight, alignWingFacesWithPreview, wingPart, animationPivot, transform, scaledPivot, new Vector3f(0, 0, 1),
             point(x2, y1, z2), point(x1, y1, z2), point(x1, y2, z2), point(x2, y2, z2));
-        addFace(output, faces, "north", textureWidth, textureHeight, alignWingFacesWithPreview, wingPart, transform, scaledPivot, new Vector3f(0, 0, -1),
+        addFace(output, faces, "north", textureWidth, textureHeight, alignWingFacesWithPreview, wingPart, animationPivot, transform, scaledPivot, new Vector3f(0, 0, -1),
             point(x1, y1, z1), point(x2, y1, z1), point(x2, y2, z1), point(x1, y2, z1));
     }
 
     private static void addFace(List<Quad> output, JsonObject faces, String name, float textureWidth, float textureHeight,
-                                boolean reverseU, WingPart wingPart, Quaternionf rotation, Vector3f pivot, Vector3f normal, Vector3f... points) {
+                                boolean reverseU, WingPart wingPart, Vector3f animationPivot, Quaternionf rotation, Vector3f pivot, Vector3f normal, Vector3f... points) {
         JsonObject face = faces.has(name) && faces.get(name).isJsonObject() ? faces.getAsJsonObject(name) : null;
         if (face == null || !face.has("uv")) return;
         JsonArray uv = face.getAsJsonArray("uv");
@@ -159,7 +190,7 @@ public final class BloomHatMesh {
             vertices[index] = new Vertex(transformed.x, transformed.y, transformed.z, coords[uvIndex][0], coords[uvIndex][1]);
         }
         Vector3f transformedNormal = rotation.transform(new Vector3f(normal)).normalize();
-        output.add(new Quad(vertices, transformedNormal, wingPart));
+        output.add(new Quad(vertices, transformedNormal, wingPart, animationPivot == null ? null : new Vector3f(animationPivot)));
     }
 
     private static Animation animation(JsonObject root, boolean wingModel) {
@@ -170,11 +201,17 @@ public final class BloomHatMesh {
             : "none";
         float speed = finiteOrDefault(value, "speed", 0.0f);
         if (!wingModel && type.equals("spin") && speed > 0) {
-            return new Animation(AnimationType.SPIN, clamp(speed, 0.05f, 4.0f), 0.0f);
+            return new Animation(AnimationType.SPIN, clamp(speed, 0.05f, 4.0f), 0.0f, FlapAxis.Z);
         }
         if (wingModel && type.equals("flap") && speed > 0) {
             float amplitude = clamp(finiteOrDefault(value, "amplitude", 18.0f), 1.0f, 60.0f);
-            return new Animation(AnimationType.FLAP, clamp(speed, 0.05f, 4.0f), amplitude);
+            String rawAxis = value.has("axis") && value.get("axis").isJsonPrimitive() ? value.get("axis").getAsString() : "z";
+            FlapAxis axis = switch (rawAxis.toLowerCase()) {
+                case "x" -> FlapAxis.X;
+                case "y" -> FlapAxis.Y;
+                default -> FlapAxis.Z;
+            };
+            return new Animation(AnimationType.FLAP, clamp(speed, 0.05f, 4.0f), amplitude, axis);
         }
         return Animation.NONE;
     }
@@ -221,10 +258,16 @@ public final class BloomHatMesh {
     }
 
     public enum AnimationType { NONE, SPIN, FLAP }
-    public record Animation(AnimationType type, float speed, float amplitude) {
-        private static final Animation NONE = new Animation(AnimationType.NONE, 0.0f, 0.0f);
+    public enum FlapAxis { X, Y, Z }
+    public record Animation(AnimationType type, float speed, float amplitude, FlapAxis axis) {
+        private static final Animation NONE = new Animation(AnimationType.NONE, 0.0f, 0.0f, FlapAxis.Z);
     }
-    private enum WingPart { CENTER, LEFT, RIGHT }
+    public record Pivot(float x, float y, float z) {
+        private static Pivot from(Vector3f value) {
+            return new Pivot(value.x, value.y, value.z);
+        }
+    }
+    private enum WingPart { CENTER, LEFT_ROOT, LEFT_FLAP, RIGHT_ROOT, RIGHT_FLAP }
     private record Vertex(float x, float y, float z, float u, float v) {}
-    private record Quad(Vertex[] vertices, Vector3f normal, WingPart part) {}
+    private record Quad(Vertex[] vertices, Vector3f normal, WingPart part, Vector3f animationPivot) {}
 }

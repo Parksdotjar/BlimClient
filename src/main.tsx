@@ -2454,7 +2454,7 @@ function WingTexturePreview({ wing, colorway }: { wing: WingCatalogItem; colorwa
     }).catch(() => { if (!disposed) setSource(""); });
     return () => { disposed = true; };
   }, [key, source, wing.id, colorway?.id]);
-  return <div className="cape-texture-preview hat-texture-preview wing-texture-preview">{source ? <img src={source} alt={`${wing.name} wing preview`} draggable={false} /> : <span className="cape-preview-loading"><Feather size={29} /></span>}</div>;
+  return <div className="cape-texture-preview hat-texture-preview wing-texture-preview">{source ? <img src={source} alt={`${wing.name} back cosmetic preview`} draggable={false} /> : <span className="cape-preview-loading"><Feather size={29} /></span>}</div>;
 }
 
 function WingCatalogCard({ wing, view, inCart, owned, equipped, equippedColorwayId, onAdd, onEquip }: {
@@ -2497,9 +2497,9 @@ function WingCartDrawer({ wings, open, adsVisible, confirming, onRemove, onConfi
   return createPortal(<div className={`cape-cart-layer ${adsVisible ? "with-ad-rail" : "without-ad-rail"}`}>
     <div className="cape-cart-scrim" onClick={onClosed} aria-hidden="true" />
     <aside className="cape-cart-drawer" role="dialog" aria-labelledby="wing-cart-title">
-      <header><div><span>YOUR SELECTION</span><h2 id="wing-cart-title">Wing cart</h2><p>Every Bloom cosmetic is free.</p></div><button className="cape-cart-close" onClick={onClosed} aria-label="Close wing cart"><CloseIcon size={18} /></button></header>
-      <div className="cape-cart-list">{wings.length ? wings.map((wing) => <div className="cape-cart-item" key={wing.id}><WingTexturePreview wing={wing} /><div><b>{wing.name}</b><span>{wing.collection}</span></div><button onClick={() => onRemove(wing.id)} aria-label={`Remove ${wing.name} from cart`}><Trash2 size={16} /></button></div>) : <div className="cape-cart-empty"><ShoppingCart size={30} /><b>Your cart is empty</b><span>Add wings from Bloom's live collection.</span></div>}</div>
-      <footer><div><span>{wings.length} {wings.length === 1 ? "wing" : "wings"}</span><b>Free</b></div><button className="cape-cart-confirm" disabled={!wings.length || confirming} onClick={onConfirm}>{confirming ? "Adding…" : "Add to collection"}<ChevronRight size={17} /></button></footer>
+      <header><div><span>YOUR SELECTION</span><h2 id="wing-cart-title">Back cart</h2><p>Every Bloom cosmetic is free.</p></div><button className="cape-cart-close" onClick={onClosed} aria-label="Close back cosmetic cart"><CloseIcon size={18} /></button></header>
+      <div className="cape-cart-list">{wings.length ? wings.map((wing) => <div className="cape-cart-item" key={wing.id}><WingTexturePreview wing={wing} /><div><b>{wing.name}</b><span>{wing.collection}</span></div><button onClick={() => onRemove(wing.id)} aria-label={`Remove ${wing.name} from cart`}><Trash2 size={16} /></button></div>) : <div className="cape-cart-empty"><ShoppingCart size={30} /><b>Your cart is empty</b><span>Add back cosmetics from Bloom's live collection.</span></div>}</div>
+      <footer><div><span>{wings.length} {wings.length === 1 ? "item" : "items"}</span><b>Free</b></div><button className="cape-cart-confirm" disabled={!wings.length || confirming} onClick={onConfirm}>{confirming ? "Adding…" : "Add to collection"}<ChevronRight size={17} /></button></footer>
     </aside>
   </div>, document.body);
 }
@@ -2546,7 +2546,7 @@ function WingShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: 
       persist({ ...accountState, collectionIds: [...new Set([...accountState.collectionIds, ...accountState.cartIds])], cartIds: [] });
       setCartOpen(false);
       setView("equipped");
-      setStatus("Wings added to your collection");
+      setStatus("Back cosmetics added to your collection");
     } catch (reason) { setStatus(String(reason)); }
     finally { setConfirming(false); window.setTimeout(() => setStatus(""), 2400); }
   };
@@ -2557,18 +2557,18 @@ function WingShopPage({ accountId, adsVisible, onSelectCategory }: { accountId: 
     try {
       await wingProvider.setEquipped(accountId, next, nextColorway);
       persist({ ...accountState, equippedWingId: next, equippedWingColorwayId: nextColorway });
-      setStatus(next ? "Wings equipped — the game updates live" : "Wings unequipped");
+      setStatus(next ? "Back cosmetic equipped — the game updates live" : "Back cosmetic unequipped");
     } catch (reason) { setStatus(String(reason)); }
     window.setTimeout(() => setStatus(""), 2200);
   };
 
   return <div className="cape-shop-page">
-    <header className="cape-shop-heading"><div><span>COSMETICS</span><h1>Shop</h1><p>Explore free Bloom cosmetics and build your collection.</p></div><button className="cape-cart-button" onClick={() => setCartOpen(true)} aria-label={`Open wing cart with ${accountState.cartIds.length} items`}><ShoppingCart size={19} />{accountState.cartIds.length > 0 && <b>{accountState.cartIds.length}</b>}</button></header>
+    <header className="cape-shop-heading"><div><span>COSMETICS</span><h1>Shop</h1><p>Explore free Bloom cosmetics and build your collection.</p></div><button className="cape-cart-button" onClick={() => setCartOpen(true)} aria-label={`Open back cosmetic cart with ${accountState.cartIds.length} items`}><ShoppingCart size={19} />{accountState.cartIds.length > 0 && <b>{accountState.cartIds.length}</b>}</button></header>
     <div className="cape-shop-segments"><span className="cape-segment-indicator" style={{ transform: view === "shop" ? "translateX(0%)" : "translateX(100%)" }} /><button className={view === "shop" ? "active" : ""} onClick={() => setView("shop")}><ShoppingBag size={15} />Shop</button><button className={view === "equipped" ? "active" : ""} onClick={() => setView("equipped")}><Shirt size={15} />Equipped</button></div>
     <section className="cape-shop-workspace">
       <CosmeticCategoryNav active="wings" onSelect={onSelectCategory} />
-      <div className="cape-catalog-panel"><div className="cape-catalog-heading"><div><h2>{view === "shop" ? "Wing Collection" : "Your Wings"}</h2><p>{view === "shop" ? "All Bloom wings are free to add to your collection." : "Choose the wings shown live in Minecraft."}</p></div><span>{visible.length} {visible.length === 1 ? "wing" : "wings"}</span></div>
-        <div className="cape-catalog-grid">{pageItems.length ? pageItems.map((wing) => <WingCatalogCard key={wing.id} wing={wing} view={view} inCart={accountState.cartIds.includes(wing.id)} owned={accountState.collectionIds.includes(wing.id)} equipped={accountState.equippedWingId === wing.id} equippedColorwayId={accountState.equippedWingColorwayId} onAdd={() => addToCart(wing.id)} onEquip={(colorwayId) => void equip(wing.id, colorwayId)} />) : <div className="cape-catalog-empty">{loading ? <><span className="cape-loading-mark" /><h2>Preparing wings</h2><p>Checking Bloom's private 3D cosmetic catalog…</p></> : error ? <><TriangleAlert size={31} /><h2>Wing catalog unavailable</h2><p>{error}</p></> : view === "shop" ? <><Feather size={34} /><h2>Wings coming soon</h2><p>Publish the first model in Bloom Cosmetics Manager to test this path.</p></> : <><ShoppingBag size={34} /><h2>Your wing collection is empty</h2><p>Add free wings from the Shop.</p></>}</div>}</div>
+      <div className="cape-catalog-panel"><div className="cape-catalog-heading"><div><h2>{view === "shop" ? "Back Collection" : "Your Back Cosmetics"}</h2><p>{view === "shop" ? "All Bloom back cosmetics are free to add to your collection." : "Choose the back cosmetic shown live in Minecraft."}</p></div><span>{visible.length} {visible.length === 1 ? "item" : "items"}</span></div>
+        <div className="cape-catalog-grid">{pageItems.length ? pageItems.map((wing) => <WingCatalogCard key={wing.id} wing={wing} view={view} inCart={accountState.cartIds.includes(wing.id)} owned={accountState.collectionIds.includes(wing.id)} equipped={accountState.equippedWingId === wing.id} equippedColorwayId={accountState.equippedWingColorwayId} onAdd={() => addToCart(wing.id)} onEquip={(colorwayId) => void equip(wing.id, colorwayId)} />) : <div className="cape-catalog-empty">{loading ? <><span className="cape-loading-mark" /><h2>Preparing back cosmetics</h2><p>Checking Bloom's private 3D cosmetic catalog…</p></> : error ? <><TriangleAlert size={31} /><h2>Back catalog unavailable</h2><p>{error}</p></> : view === "shop" ? <><Feather size={34} /><h2>Back cosmetics coming soon</h2><p>Publish the first model in Bloom Cosmetics Manager to test this path.</p></> : <><ShoppingBag size={34} /><h2>Your back collection is empty</h2><p>Add free back cosmetics from the Shop.</p></>}</div>}</div>
         {pageCount > 1 && <div className="cape-catalog-pages"><button disabled={page === 1} onClick={() => setPage((value) => value - 1)}>Previous</button><span>Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setPage((value) => value + 1)}>Next</button></div>}
       </div>
     </section>
@@ -2641,7 +2641,7 @@ function BraceletShopPage({ accountId, adsVisible, onSelectCategory }: { account
 }
 
 function CosmeticCategoryNav({ active, onSelect }: { active: CosmeticCategory; onSelect: (category: CosmeticCategory) => void }) {
-  return <aside className="cape-shop-categories"><button className={active === "capes" ? "active" : ""} onClick={() => onSelect("capes")}><Shirt size={17} />Capes</button><button className={active === "hats" ? "active" : ""} onClick={() => onSelect("hats")}><Crown size={17} />Hats</button><button className={active === "wings" ? "active" : ""} onClick={() => onSelect("wings")}><Feather size={17} />Wings</button><button className={active === "bracelets" ? "active" : ""} onClick={() => onSelect("bracelets")}><Watch size={17} />Bracelets</button><div><LockKeyhole size={15} /><span>More categories soon</span></div><article><ShoppingBag size={22} /><b>More cosmetics coming soon</b><span>New cosmetic types will join the collection later.</span></article></aside>;
+  return <aside className="cape-shop-categories"><button className={active === "capes" ? "active" : ""} onClick={() => onSelect("capes")}><Shirt size={17} />Capes</button><button className={active === "hats" ? "active" : ""} onClick={() => onSelect("hats")}><Crown size={17} />Hats</button><button className={active === "wings" ? "active" : ""} onClick={() => onSelect("wings")}><Feather size={17} />Back</button><button className={active === "bracelets" ? "active" : ""} onClick={() => onSelect("bracelets")}><Watch size={17} />Bracelets</button><div><LockKeyhole size={15} /><span>More categories soon</span></div><article><ShoppingBag size={22} /><b>More cosmetics coming soon</b><span>New cosmetic types will join the collection later.</span></article></aside>;
 }
 
 function CapeShopPage({ accountId, adsVisible }: { accountId: string | null; adsVisible: boolean }) {

@@ -6,51 +6,31 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class BloomCapeService {
     private static final Logger LOGGER = LoggerFactory.getLogger("Bloom Cosmetics");
-    private static final String API = "https://api.north.bloomclient.org/minecraft";
-    private static final long ACTIVE_PLAYER_WINDOW_MS = 20_000L;
     private static final BloomCapeService INSTANCE = new BloomCapeService();
+    private static final int MAX_STATIC_BYTES = 8 * 1024 * 1024;
+    private static final int MAX_ATLAS_BYTES = 32 * 1024 * 1024;
 
-    private final HttpClient client = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(4))
-        .followRedirects(HttpClient.Redirect.NORMAL)
-        .build();
-    private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor(task -> {
-        Thread thread = new Thread(task, "Bloom-Cape-Refresh");
-        thread.setDaemon(true);
-        thread.setPriority(Thread.MIN_PRIORITY);
-        return thread;
-    });
     private final ConcurrentHashMap<UUID, Long> observedPlayers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, CapeAssignment> assignments = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, CompletableFuture<Identifier>> textureLoads = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CompletableFuture<LoadedCape>> capeLoads = new ConcurrentHashMap<>();
     private final AtomicBoolean started = new AtomicBoolean();
     private final AtomicBoolean refreshing = new AtomicBoolean();
 
@@ -60,43 +40,31 @@ public final class BloomCapeService {
 
     public void start() {
         if (!started.compareAndSet(false, true)) return;
-        worker.scheduleWithFixedDelay(this::refreshObservedPlayers, 0, 2, TimeUnit.SECONDS);
-        LOGGER.info("Bloom Cosmetics is ready for live cape updates.");
+        BloomCosmeticsRuntime.scheduleRefresh(this::refreshObservedPlayers);
+        LOGGER.info("Bloom Cosmetics is ready for live static and animated cape updates.");
     }
 
     public Identifier textureFor(UUID uuid) {
-        long now = System.currentTimeMillis();
-        Long lastSeen = observedPlayers.get(uuid);
-        if (lastSeen == null || now - lastSeen >= 1_000L) observedPlayers.put(uuid, now);
-        CapeAssignment assignment = assignments.get(uuid);
-        return assignment == null ? null : assignment.texture;
+        MinecraftClient minecraft = MinecraftClient.getInstance();
+        UUID identity = BloomCosmeticsRuntime.stableIdentity(minecraft, uuid);
+        BloomCosmeticsRuntime.observe(observedPlayers, identity);
+        CapeAssignment assignment = assignments.get(identity);
+        return assignment == null || assignment.cape == null ? null : assignment.cape.textureNow();
     }
 
     private void refreshObservedPlayers() {
         if (!refreshing.compareAndSet(false, true)) return;
         try {
-            long cutoff = System.currentTimeMillis() - ACTIVE_PLAYER_WINDOW_MS;
-            observedPlayers.entrySet().removeIf(entry -> entry.getValue() < cutoff);
-            if (observedPlayers.isEmpty()) {
-                // The first scheduled refresh normally runs before Minecraft has
-                // rendered a player. Release the guard so the next refresh can
-                // fetch capes after textureFor() observes the local player.
+            List<UUID> players = BloomCosmeticsRuntime.activePlayers(observedPlayers);
+            if (players.isEmpty()) {
                 refreshing.set(false);
                 return;
             }
-
-            List<UUID> players = observedPlayers.keySet().stream().limit(100).toList();
-            String joined = players.stream().map(BloomCapeService::compactUuid).reduce((left, right) -> left + "," + right).orElse("");
-            HttpRequest request = HttpRequest.newBuilder(URI.create(API + "/v1/capes/equipped?uuids=" + URLEncoder.encode(joined, StandardCharsets.UTF_8)))
-                .timeout(Duration.ofSeconds(5))
-                .header("Accept", "application/json")
-                .header("User-Agent", "Bloom-Cosmetics/1.0.1")
-                .GET()
-                .build();
-            client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            var request = BloomCosmeticsRuntime.get(
+                BloomCosmeticsRuntime.equippedUrl("capes", players), "application/json", 5);
+            BloomCosmeticsRuntime.HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString())
                 .thenAccept(response -> {
-                    if (response.statusCode() != 200) return;
-                    applyAssignments(players, response.body());
+                    if (response.statusCode() == 200) applyAssignments(players, response.body());
                 })
                 .exceptionally(error -> null)
                 .whenComplete((unused, error) -> refreshing.set(false));
@@ -114,134 +82,229 @@ public final class BloomCapeService {
             if (items != null) {
                 for (JsonElement element : items) {
                     JsonObject item = element.getAsJsonObject();
-                    UUID uuid = parseUuid(item.get("uuid").getAsString());
+                    UUID uuid = BloomCosmeticsRuntime.parseUuid(item.get("uuid").getAsString());
                     remote.put(uuid, new RemoteCape(
                         item.get("capeId").getAsString(),
                         item.get("textureRevision").getAsString(),
-                        item.has("textureUrl") ? item.get("textureUrl").getAsString() : null
+                        item.has("textureUrl") ? item.get("textureUrl").getAsString() : null,
+                        parseAnimation(item)
                     ));
                 }
             }
 
-            Set<UUID> requested = new HashSet<>(requestedPlayers);
-            for (UUID uuid : requested) {
+            for (UUID uuid : requestedPlayers) {
                 RemoteCape next = remote.get(uuid);
                 if (next == null) {
                     assignments.remove(uuid);
                     continue;
                 }
-                String assetKey = next.capeId + ":" + next.revision;
+                String assetKey = next.assetKey();
                 CapeAssignment current = assignments.get(uuid);
-                if (current != null && current.assetKey.equals(assetKey) && current.texture != null) continue;
-                assignments.put(uuid, new CapeAssignment(assetKey, null));
-                loadTexture(next).thenAccept(identifier -> {
+                if (current != null && current.assetKey.equals(assetKey) && current.cape != null) continue;
+                assignments.put(uuid, new CapeAssignment(assetKey, current == null ? null : current.cape));
+                loadCape(next).thenAccept(cape -> {
                     CapeAssignment latest = assignments.get(uuid);
-                    if (latest != null && latest.assetKey.equals(assetKey)) {
-                        latest.texture = identifier;
-                    }
-                });
+                    if (latest != null && latest.assetKey.equals(assetKey)) latest.cape = cape;
+                }).exceptionally(error -> null);
             }
         } catch (Exception ignored) {
             // Ignore malformed remote data and keep the last known safe state.
         }
     }
 
-    private CompletableFuture<Identifier> loadTexture(RemoteCape cape) {
-        String key = cape.capeId + ":" + cape.revision;
-        return textureLoads.computeIfAbsent(key, unused -> requestTexture(cape)
-            .whenComplete((identifier, error) -> {
-                if (error != null) textureLoads.remove(key);
+    private RemoteAnimation parseAnimation(JsonObject item) {
+        if (!item.has("animation") || item.get("animation").isJsonNull()) return null;
+        JsonObject value = item.getAsJsonObject("animation");
+        return new RemoteAnimation(
+            value.get("revision").getAsString(),
+            value.get("atlasUrl").getAsString(),
+            value.get("frameCount").getAsInt(),
+            value.get("columns").getAsInt(),
+            value.get("rows").getAsInt(),
+            value.get("frameWidth").getAsInt(),
+            value.get("frameHeight").getAsInt(),
+            value.get("fps").getAsDouble(),
+            !value.has("loop") || value.get("loop").getAsBoolean()
+        );
+    }
+
+    private CompletableFuture<LoadedCape> loadCape(RemoteCape cape) {
+        return capeLoads.computeIfAbsent(cape.assetKey(), unused -> requestCape(cape)
+            .whenComplete((loaded, error) -> {
+                if (error != null) capeLoads.remove(cape.assetKey());
             }));
     }
 
-    private CompletableFuture<Identifier> requestTexture(RemoteCape cape) {
-        if (cape.textureUrl != null && !cape.textureUrl.isBlank()) {
-            HttpRequest textureRequest = HttpRequest.newBuilder(URI.create(cape.textureUrl))
-                .timeout(Duration.ofSeconds(8))
-                .header("Accept", "image/png")
-                .header("User-Agent", "Bloom-Cosmetics/1.3.0")
-                .GET()
-                .build();
-            return client.sendAsync(textureRequest, HttpResponse.BodyHandlers.ofByteArray())
-                .thenCompose(response -> decodeTextureResponse(cape, response));
+    private CompletableFuture<LoadedCape> requestCape(RemoteCape cape) {
+        if (cape.animation != null) {
+            return requestAnimatedCape(cape, cape.animation)
+                .exceptionallyCompose(error -> requestStaticCape(cape));
         }
-        String leaseUrl = API + "/v1/capes/" + URLEncoder.encode(cape.capeId, StandardCharsets.UTF_8) + "/texture";
-        HttpRequest leaseRequest = HttpRequest.newBuilder(URI.create(leaseUrl))
-            .timeout(Duration.ofSeconds(5))
-            .header("Accept", "application/json")
-            .header("User-Agent", "Bloom-Cosmetics/1.0.0")
-            .GET()
-            .build();
-        return client.sendAsync(leaseRequest, HttpResponse.BodyHandlers.ofString())
+        return requestStaticCape(cape);
+    }
+
+    private CompletableFuture<LoadedCape> requestAnimatedCape(RemoteCape cape, RemoteAnimation animation) {
+        var request = BloomCosmeticsRuntime.get(animation.atlasUrl, "image/png", 12);
+        return BloomCosmeticsRuntime.HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofByteArray())
+            .thenCompose(response -> decodeAnimationResponse(cape, animation, response));
+    }
+
+    private CompletableFuture<LoadedCape> requestStaticCape(RemoteCape cape) {
+        if (cape.textureUrl != null && !cape.textureUrl.isBlank()) {
+            var request = BloomCosmeticsRuntime.get(cape.textureUrl, "image/png", 8);
+            return BloomCosmeticsRuntime.HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofByteArray())
+                .thenCompose(response -> decodeStaticResponse(cape, response));
+        }
+        String leaseUrl = BloomCosmeticsRuntime.API_BASE + "/v1/capes/"
+            + URLEncoder.encode(cape.capeId, StandardCharsets.UTF_8) + "/texture";
+        var leaseRequest = BloomCosmeticsRuntime.get(leaseUrl, "application/json", 5);
+        return BloomCosmeticsRuntime.HTTP.sendAsync(leaseRequest, HttpResponse.BodyHandlers.ofString())
             .thenCompose(leaseResponse -> {
                 if (leaseResponse.statusCode() != 200) return CompletableFuture.failedFuture(new IllegalStateException("Cape lease unavailable"));
                 JsonObject lease = JsonParser.parseString(leaseResponse.body()).getAsJsonObject();
-                String revision = lease.get("revision").getAsString();
-                if (!cape.revision.equals(revision)) return CompletableFuture.failedFuture(new IllegalStateException("Cape revision changed"));
-                HttpRequest textureRequest = HttpRequest.newBuilder(URI.create(lease.get("url").getAsString()))
-                    .timeout(Duration.ofSeconds(8))
-                    .header("Accept", "image/png")
-                    .header("User-Agent", "Bloom-Cosmetics/1.0.0")
-                    .GET()
-                    .build();
-                return client.sendAsync(textureRequest, HttpResponse.BodyHandlers.ofByteArray());
+                if (!cape.revision.equals(lease.get("revision").getAsString())) {
+                    return CompletableFuture.failedFuture(new IllegalStateException("Cape revision changed"));
+                }
+                var textureRequest = BloomCosmeticsRuntime.get(lease.get("url").getAsString(), "image/png", 8);
+                return BloomCosmeticsRuntime.HTTP.sendAsync(textureRequest, HttpResponse.BodyHandlers.ofByteArray());
             })
-            .thenCompose(response -> decodeTextureResponse(cape, response));
+            .thenCompose(response -> decodeStaticResponse(cape, response));
     }
 
-    private CompletableFuture<Identifier> decodeTextureResponse(RemoteCape cape, HttpResponse<byte[]> response) {
-        if (response.statusCode() != 200 || response.body().length > 8 * 1024 * 1024) {
+    private CompletableFuture<LoadedCape> decodeStaticResponse(RemoteCape cape, HttpResponse<byte[]> response) {
+        if (response.statusCode() != 200 || response.body().length > MAX_STATIC_BYTES) {
             return CompletableFuture.failedFuture(new IllegalStateException("Cape texture unavailable"));
         }
         try {
             NativeImage image = NativeImage.read(response.body());
-            if (image.getWidth() != image.getHeight() * 2 || image.getWidth() < 64 || image.getWidth() > 2048) {
+            if (!validFrameDimensions(image.getWidth(), image.getHeight())) {
                 image.close();
                 return CompletableFuture.failedFuture(new IllegalStateException("Invalid cape dimensions"));
             }
-            return registerTexture(cape, image);
+            return BloomCosmeticsRuntime.registerTexture(
+                    "capes", cape.capeId, cape.revision, "Bloom cape " + cape.capeId, image)
+                .thenApply(identifier -> LoadedCape.still(identifier));
         } catch (Exception error) {
             return CompletableFuture.failedFuture(error);
         }
     }
 
-    private CompletableFuture<Identifier> registerTexture(RemoteCape cape, NativeImage image) {
-        CompletableFuture<Identifier> result = new CompletableFuture<>();
-        String safeRevision = cape.revision.toLowerCase().replaceAll("[^a-z0-9_.-]", "-");
-        Identifier identifier = Identifier.of("bloom_cosmetics", "capes/" + cape.capeId + "/" + safeRevision);
-        MinecraftClient minecraft = MinecraftClient.getInstance();
-        minecraft.execute(() -> {
-            try {
-                NativeImageBackedTexture texture = new NativeImageBackedTexture(() -> "Bloom cape " + cape.capeId, image);
-                minecraft.getTextureManager().registerTexture(identifier, texture);
-                result.complete(identifier);
-            } catch (Throwable error) {
-                image.close();
-                result.completeExceptionally(error);
+    private CompletableFuture<LoadedCape> decodeAnimationResponse(
+        RemoteCape cape,
+        RemoteAnimation animation,
+        HttpResponse<byte[]> response
+    ) {
+        if (response.statusCode() != 200 || response.body().length > MAX_ATLAS_BYTES || !animation.valid()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Cape animation unavailable"));
+        }
+        NativeImage atlas;
+        try {
+            atlas = NativeImage.read(response.body());
+        } catch (Exception error) {
+            return CompletableFuture.failedFuture(error);
+        }
+        if (atlas.getWidth() != animation.columns * animation.frameWidth
+            || atlas.getHeight() != animation.rows * animation.frameHeight
+            || atlas.getWidth() > 4096 || atlas.getHeight() > 4096) {
+            atlas.close();
+            return CompletableFuture.failedFuture(new IllegalStateException("Invalid cape animation atlas"));
+        }
+
+        List<CompletableFuture<Identifier>> registrations = new ArrayList<>(animation.frameCount);
+        try {
+            for (int index = 0; index < animation.frameCount; index++) {
+                int sourceX = (index % animation.columns) * animation.frameWidth;
+                int sourceY = (index / animation.columns) * animation.frameHeight;
+                NativeImage frame = new NativeImage(animation.frameWidth, animation.frameHeight, true);
+                for (int y = 0; y < animation.frameHeight; y++) {
+                    for (int x = 0; x < animation.frameWidth; x++) {
+                        frame.setColorArgb(x, y, atlas.getColorArgb(sourceX + x, sourceY + y));
+                    }
+                }
+                registrations.add(BloomCosmeticsRuntime.registerTexture(
+                    "capes", cape.capeId,
+                    animation.revision + "-frame-" + index,
+                    "Bloom animated cape " + cape.capeId + " frame " + index,
+                    frame
+                ));
             }
-        });
-        return result;
+        } catch (Throwable error) {
+            atlas.close();
+            return CompletableFuture.failedFuture(error);
+        }
+        atlas.close();
+        return CompletableFuture.allOf(registrations.toArray(CompletableFuture[]::new))
+            .thenApply(unused -> new LoadedCape(
+                registrations.stream().map(CompletableFuture::join).toList(),
+                animation.fps,
+                animation.loop
+            ));
     }
 
-    private static String compactUuid(UUID uuid) {
-        return uuid.toString().replace("-", "").toLowerCase();
+    private boolean validFrameDimensions(int width, int height) {
+        return width == height * 2 && width >= 64 && width <= 2048
+            && height >= 32 && height <= 1024 && width % 64 == 0 && height % 32 == 0;
     }
 
-    private static UUID parseUuid(String value) {
-        String compact = value.replace("-", "").toLowerCase();
-        if (compact.length() != 32) throw new IllegalArgumentException("Invalid UUID");
-        return UUID.fromString(compact.substring(0, 8) + "-" + compact.substring(8, 12) + "-" + compact.substring(12, 16) + "-" + compact.substring(16, 20) + "-" + compact.substring(20));
+    private record RemoteCape(String capeId, String revision, String textureUrl, RemoteAnimation animation) {
+        private String assetKey() {
+            return capeId + ":" + revision + (animation == null ? "" : ":animated:" + animation.revision);
+        }
     }
 
-    private record RemoteCape(String capeId, String revision, String textureUrl) {}
+    private record RemoteAnimation(
+        String revision,
+        String atlasUrl,
+        int frameCount,
+        int columns,
+        int rows,
+        int frameWidth,
+        int frameHeight,
+        double fps,
+        boolean loop
+    ) {
+        private boolean valid() {
+            return revision != null && !revision.isBlank() && atlasUrl != null && !atlasUrl.isBlank()
+                && frameCount >= 1 && frameCount <= 120 && columns >= 1 && rows >= 1
+                && columns * rows >= frameCount && frameWidth >= 64 && frameWidth <= 2048
+                && frameHeight >= 32 && frameHeight <= 1024 && frameWidth == frameHeight * 2
+                && frameWidth % 64 == 0 && frameHeight % 32 == 0
+                && Double.isFinite(fps) && fps >= 1.0 && fps <= 30.0;
+        }
+    }
+
+    private static final class LoadedCape {
+        private final List<Identifier> frames;
+        private final double fps;
+        private final boolean loop;
+        private final long startedAtNanos = System.nanoTime();
+
+        private LoadedCape(List<Identifier> frames, double fps, boolean loop) {
+            this.frames = frames;
+            this.fps = fps;
+            this.loop = loop;
+        }
+
+        private static LoadedCape still(Identifier texture) {
+            return new LoadedCape(List.of(texture), 0.0, false);
+        }
+
+        private Identifier textureNow() {
+            if (frames.size() == 1 || fps <= 0.0) return frames.getFirst();
+            long elapsedNanos = Math.max(0L, System.nanoTime() - startedAtNanos);
+            long frame = (long) Math.floor(elapsedNanos / 1_000_000_000.0 * fps);
+            int index = loop ? (int) (frame % frames.size()) : (int) Math.min(frame, frames.size() - 1L);
+            return frames.get(index);
+        }
+    }
 
     private static final class CapeAssignment {
         private final String assetKey;
-        private volatile Identifier texture;
+        private volatile LoadedCape cape;
 
-        private CapeAssignment(String assetKey, Identifier texture) {
+        private CapeAssignment(String assetKey, LoadedCape cape) {
             this.assetKey = assetKey;
-            this.texture = texture;
+            this.cape = cape;
         }
     }
 }
